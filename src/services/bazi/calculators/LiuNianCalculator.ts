@@ -140,8 +140,8 @@ export class LiuNianCalculator {
       case '冲': score -= 20; break;
       case '害': score -= 15; break;
       case '刑': score -= 10; break;
-      case '合': score += 15; break;
-      case '六合': score += 20; break;
+      case '六合': score += 15; break;
+      case '三合': score += 20; break;
     }
     
     // Ten god influence
@@ -194,7 +194,7 @@ export class LiuNianCalculator {
   private static analyzeTaiSuiRelation(
     yearBranch: string,
     chart: BaziChart
-  ): '冲' | '害' | '刑' | '合' | '六合' | '中性' {
+  ): '冲' | '害' | '刑' | '六合' | '三合' | '中性' {
     const branches = [chart.year.branch, chart.month.branch, chart.day.branch, chart.hour.branch];
     
     // Check clashes (沖)
@@ -217,7 +217,7 @@ export class LiuNianCalculator {
       '巳': '申', '申': '巳',
       '午': '未', '未': '午'
     };
-    if (branches.includes(harmonies[yearBranch])) return '合';
+    if (branches.includes(harmonies[yearBranch])) return '六合';
     
     // Check harms (害)
     const harms: Record<string, string> = {
@@ -241,7 +241,7 @@ export class LiuNianCalculator {
       if (triple.includes(yearBranch)) {
         const otherTwo = triple.filter(b => b !== yearBranch);
         if (otherTwo.every(b => branches.includes(b))) {
-          return '六合';
+          return '三合';
         }
       }
     }
