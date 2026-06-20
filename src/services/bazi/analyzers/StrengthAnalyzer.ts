@@ -411,8 +411,10 @@ export class StrengthAnalyzer {
     // 6. Check Harms (害)
     this.checkHarms(chart, scores, adjustments, breakdown);
     
-    // 7. Apply Generating and Overcoming (生克)
-    // NOTE: Temporarily disabled - this method is incorrectly reducing all scores
+    // 7. 五行生克調整（applyGeneratingOvercoming）— 永久停用（🟠-5，非暫時）。
+    //    經三方獨立評估（命理／工程／實證）一致：傳統旺衰已將生克隱含於「我黨 vs 異黨」
+    //    陣營劃分（見 calculateForces），此連環能量轉移模型屬非傳統且重複計算，
+    //    啟用會令兩極命盤更極端（原註「incorrectly reducing all scores」診斷正確）。保持停用。
     // this.applyGeneratingOvercoming(chart, scores, adjustments, breakdown);
     
     return { scores, adjustments };
@@ -1093,6 +1095,10 @@ export class StrengthAnalyzer {
           
           // Find how much this branch contributed and subtract it
           // This is a simplified approach - in reality we'd need to track contributions
+          // 已知限制（🟠-5）：月支不在此清零表。月支能量用獨立的月令 180 分機制
+          //（見 MONTH_BRANCH_ENERGY / calculateBranchEnergy 月支 weight=0），與此處
+          // POSITION_WEIGHTS（25-40）量綱不同。三方評估：正確修需同步改 calculateBranchEnergy，
+          // 否則月支能量會憑空蒸發；且強弱屬無權威對照的啟發式，風險高於可驗證收益，故暫不改。
           const positions = [
             { branch: chart.year.branch, weight: POSITION_WEIGHTS.yearBranch },
             { branch: chart.day.branch, weight: POSITION_WEIGHTS.dayBranch },
