@@ -4,6 +4,7 @@
  * Calculates major luck periods (大運)
  */
 
+import { Solar } from 'lunar-javascript';
 import { BaziChart, DaYun, DaYunAnalysis, FortunePrediction } from '../types';
 import { HEAVENLY_STEMS, EARTHLY_BRANCHES, TEN_GODS } from '../../../core/constants/bazi';
 import { LuckCycleCalculator, DaYunPeriod } from './LuckCycleCalculator';
@@ -19,48 +20,42 @@ export class DaYunCalculator {
     timeRange: { startYear?: number; endYear?: number }
   ): DaYun[] {
     
-    // Use LuckCycleCalculator for precise calculations
+    // 🔴-3/🔴-4：起運與大運改用 lunar getYun（與四柱一致，正確換算 3日1歲 + 高精度節氣）
     const birthDate = birthInfo.solar instanceof Date ? birthInfo.solar : new Date(birthInfo.solar);
-    const birthYear = birthDate.getFullYear();
-    
-    
-    const daYunPeriods = LuckCycleCalculator.calLuckyList(
-      chart,
-      gender,
-      birthDate,
-      12 // Generate 12 periods to cover full lifetime (120 years)
+    const solar = Solar.fromYmdHms(
+      birthDate.getFullYear(), birthDate.getMonth() + 1, birthDate.getDate(),
+      birthDate.getHours(), birthDate.getMinutes(), birthDate.getSeconds()
     );
-    
-    
+    const ec = solar.getLunar().getEightChar();
+    ec.setSect(2); // 子時不換日，與四柱一致
+    const yun = ec.getYun(gender === 'male' ? 1 : 0, 2);
+    const lunarDaYun = yun.getDaYun(13); // [0]=起運前，[1..12]=12 個十年大運（與原 12 期 parity）
+
     const daYuns: DaYun[] = [];
-    
-    for (const period of daYunPeriods) {
-      const periodStartYear = birthYear + period.startAge - 1;
-      const periodEndYear = birthYear + period.endAge - 1;
-      
-      // Calculate ten god for this Da Yun
-      const tenGod = this.getTenGod(chart.day.stem, period.stemBranch.stem);
-      
-      // Analyze this Da Yun period
-      const analysis = this.analyzeDaYun(
-        period.stemBranch,
-        chart,
-        tenGod
-      );
-      
+    for (let i = 1; i < lunarDaYun.length; i++) {
+      const d = lunarDaYun[i];
+      const ganzhi: string = d.getGanZhi();
+      const stem = ganzhi.charAt(0);
+      const branch = ganzhi.charAt(1);
+      const startAge: number = d.getStartAge();
+      const startYear: number = d.getStartYear();
+
+      const tenGod = this.getTenGod(chart.day.stem, stem);
+      const analysis = this.analyzeDaYun({ stem, branch }, chart, tenGod);
+
       daYuns.push({
-        index: period.index,
-        startAge: period.startAge,
-        endAge: period.endAge,
-        startYear: periodStartYear,
-        endYear: periodEndYear,
-        stem: period.stemBranch.stem,
-        branch: period.stemBranch.branch,
+        index: i - 1,
+        startAge,
+        endAge: startAge + 9,
+        startYear,
+        endYear: startYear + 9,
+        stem,
+        branch,
         tenGod,
-        analysis
+        analysis,
       });
     }
-    
+
     return daYuns;
   }
   
