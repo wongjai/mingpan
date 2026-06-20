@@ -526,8 +526,8 @@ export class LuckCycleCalculator {
     const stemDiff = Math.abs(daYunStemIndex - liuNianStemIndex);
     if (stemDiff === 5) {
       stemRelation = 'combine'; // 天干合
-    } else if (stemDiff === 4 || stemDiff === 6) {
-      stemRelation = 'clash'; // 天干冲
+    } else if (stemDiff === 6) {
+      stemRelation = 'clash'; // 天干冲（甲庚/乙辛/丙壬/丁癸，天干索引相隔 6；原 ===4 為誤判）
     }
     
     // Analyze branch relationship
