@@ -325,6 +325,7 @@ export class LuckCycleCalculator {
    * Calculate complete list of 10-year luck pillars (大運)
    * Usually calculates 8-10 periods covering 80-100 years
    */
+  /** @deprecated Phase 3 後大運改用 lunar getYun（見 DaYunCalculator）。此手砌起運列表已無 active caller，保留待清理。 */
   static calLuckyList(
     chart: BaziChart,
     gender: Gender,

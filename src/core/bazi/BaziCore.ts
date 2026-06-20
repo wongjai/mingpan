@@ -153,6 +153,9 @@ export class BaziCore {
   /**
    * Calculate four pillars based on taro-bazi logic
    */
+  /** @deprecated Phase 3 後四柱改用 lunar getEightChar（見 buildChartFromEightChar）。
+   *  此手砌路徑（calculateHoroscope/YearPillar/MonthPillar/DayPillar/normalizeSolarTerm）
+   *  已無 active caller，保留待日後一次過清理。calculateHourPillar 仍被方案B使用，不在此列。 */
   private calculateHoroscope(
     year: number,
     month: number,
