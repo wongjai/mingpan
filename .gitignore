@@ -34,7 +34,10 @@ test/results/
 *.temp
 
 .venv/
-test/
+test/*
+!test/characterization.test.ts
+!test/__snapshots__/
+!test/__snapshots__/*.snap
 
 # Openspec
 openspec
