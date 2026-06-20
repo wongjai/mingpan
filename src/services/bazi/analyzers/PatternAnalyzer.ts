@@ -60,8 +60,8 @@ export class PatternAnalyzer {
     }
 
     // Step 1: Analyze day master strength
-    const dayMasterAnalysis = strengthAnalysis 
-      ? this.convertStrengthAnalysis(strengthAnalysis)
+    const dayMasterAnalysis = strengthAnalysis
+      ? this.convertStrengthAnalysis(strengthAnalysis, chart)
       : this.analyzeDayMasterStrength(chart, relationsResult);
     
     // Validate day master analysis
@@ -431,7 +431,7 @@ export class PatternAnalyzer {
   /**
    * Convert StrengthAnalyzer result to internal format
    */
-  private static convertStrengthAnalysis(strengthAnalysis: any): any {
+  private static convertStrengthAnalysis(strengthAnalysis: any, chart: BaziChart): any {
     // Map detailed strength to basic type
     let type: '身強' | '身弱' | '平衡' | '極端';
     const dayMasterStrength = strengthAnalysis.dayMasterStrength;
@@ -455,12 +455,37 @@ export class PatternAnalyzer {
     }
     
     return {
-      strength: strengthAnalysis.totalScore || 50,
+      // 🟠-6 修正：用 percentage（日主力量佔比 0-100）對齊 checkFollowPatterns 的 80/20 閾值；
+      // 原用 totalScore（±360）量綱不符，令中和偏弱命盤被誤判從格。
+      strength: strengthAnalysis.percentage ?? 50,
       type,
       originalStrength: dayMasterStrength,
-      supportingElements: [],
+      // 🟠-6 修正：由命盤計算生扶日主的五行（印星＋地支根），原硬編碼 [] 令從旺格永不成立。
+      supportingElements: this.computeSupportingElements(chart),
       drainingElements: []
     };
+  }
+
+  /**
+   * 計算生扶日主的五行（印星出現於天干 + 地支藏日主或印之根）
+   * 與 analyzeDayMasterStrength 的 supportingElements 邏輯一致，供 convertStrengthAnalysis 共用
+   */
+  private static computeSupportingElements(chart: BaziChart): string[] {
+    const dayMasterElement = this.getStemElement(chart.day.stem);
+    const generatingElement = this.getGeneratingElement(dayMasterElement);
+    const supporting: string[] = [];
+    const allStems = [chart.year.stem, chart.month.stem, chart.day.stem, chart.hour.stem];
+    if (allStems.some(s => this.getStemElement(s) === generatingElement)) {
+      supporting.push(generatingElement);
+    }
+    const allBranches = [chart.year.branch, chart.month.branch, chart.day.branch, chart.hour.branch];
+    allBranches.forEach(b => {
+      const be = this.getBranchElement(b);
+      if ((be === dayMasterElement || be === generatingElement) && !supporting.includes(be)) {
+        supporting.push(be);
+      }
+    });
+    return supporting;
   }
   
   /**
