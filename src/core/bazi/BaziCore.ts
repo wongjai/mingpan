@@ -101,14 +101,14 @@ export class BaziCore {
     };
     
     // Step 4: Calculate four pillars with solar term consideration
-    const chart = this.calculateHoroscope(
-      input.year,
-      input.month,
-      input.day,
-      input.hour,
-      solarTerm,
-      isCurrentMonthSolarTerm
-    );
+    // 四柱改用 lunar getEightChar()（基於已含真太陽時調整的 birthDate），一次過：
+    // - 🔴-1：真太陽時實際餵入年/月/日/時柱（原 calculateHoroscope 用未調整的 input.*）
+    // - 🔴-2：setSect(2) 子時不換日（用戶選定流派；實證 lunar-javascript sect=2=當日、sect=1=次日）
+    // - 年柱用實際出生日（原 calculateYearPillar 用月中 15 號，立春前後會錯）
+    // - 月柱/換月統一走 lunar 高精度節氣
+    const eightChar = lunar.getEightChar();
+    eightChar.setSect(2);
+    const chart = this.buildChartFromEightChar(eightChar);
     
     // Step 5: Get lunar date (already calculated above)
     const rawMonth = lunar.getMonth();
@@ -189,7 +189,30 @@ export class BaziCore {
     
     return chart;
   }
-  
+
+  /**
+   * 由 lunar getEightChar 組裝四柱（取代手砌的 calculateHoroscope 路徑）。
+   * EightChar 已正確處理真太陽時（透過調整後的 birthDate）、節氣換月、立春換年、
+   * 子時流派（setSect）。下游 chart 結構不變。
+   */
+  private buildChartFromEightChar(ec: any): BaziChart {
+    const yg = ec.getYearGan(), yz = ec.getYearZhi();
+    const mg = ec.getMonthGan(), mz = ec.getMonthZhi();
+    const dg = ec.getDayGan(), dz = ec.getDayZhi();
+    const hg = ec.getTimeGan(), hz = ec.getTimeZhi();
+    const chart: BaziChart = {
+      year: this.createPillar(yg, yz),
+      month: this.createPillar(mg, mz),
+      day: this.createPillar(dg, dz),
+      hour: this.createPillar(hg, hz),
+    };
+    chart.year.selfSitting = this.calculateSelfSitting(yg, yz);
+    chart.month.selfSitting = this.calculateSelfSitting(mg, mz);
+    chart.day.selfSitting = this.calculateSelfSitting(dg, dz);
+    chart.hour.selfSitting = this.calculateSelfSitting(hg, hz);
+    return chart;
+  }
+
   /**
    * Calculate year pillar using lunar-javascript
    */

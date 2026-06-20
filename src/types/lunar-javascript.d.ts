@@ -144,6 +144,7 @@ declare module 'lunar-javascript' {
     getMonthDiShi(): string;
     getDayDiShi(): string;
     getTimeDiShi(): string;
+    setSect(sect: number): void;
     toString(): string;
     toFullString(): string;
   }
