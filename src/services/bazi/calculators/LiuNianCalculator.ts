@@ -156,10 +156,9 @@ export class LiuNianCalculator {
     if (this.hasStemCombination(liuNian.stem, chart)) score += 10;
     if (this.hasStemClash(liuNian.stem, chart)) score -= 10;
     
-    // Check branch relationships
-    const branchScore = this.evaluateBranchRelations(liuNian.branch, chart);
-    score += branchScore;
-    
+    // 註：流年支 vs 命盤地支的沖/合/害/刑 已由上方 analyzeTaiSuiRelation 處理，
+    // 不再重複計（原 evaluateBranchRelations 為未實現空殼，回 0，移除以免日後 double count）。
+
     // DaYun interaction (if provided)
     if (currentDaYun && currentDaYun.stemBranch && currentDaYun.stemBranch.stem && currentDaYun.stemBranch.branch) {
       const interaction = LuckCycleCalculator.analyzeDaYunLiuNian(
@@ -283,50 +282,8 @@ export class LiuNianCalculator {
     return chartStems.includes(clashes[stem]);
   }
   
-  /**
-   * Evaluate branch relations
-   */
-  private static evaluateBranchRelations(branch: string, chart: BaziChart): number {
-    let score = 0;
-    const branches = [chart.year.branch, chart.month.branch, chart.day.branch, chart.hour.branch];
-    
-    // Count favorable and unfavorable relations
-    const relations = this.getBranchRelations(branch, branches);
-    score += relations.harmonies * 10;
-    score += relations.combines * 15;
-    score -= relations.clashes * 15;
-    score -= relations.harms * 10;
-    score -= relations.punishments * 10;
-    
-    return score;
-  }
-  
-  /**
-   * Get all branch relations
-   */
-  private static getBranchRelations(
-    branch: string,
-    chartBranches: string[]
-  ): {
-    harmonies: number;
-    combines: number;
-    clashes: number;
-    harms: number;
-    punishments: number;
-  } {
-    const relations = {
-      harmonies: 0,
-      combines: 0,
-      clashes: 0,
-      harms: 0,
-      punishments: 0
-    };
-    
-    // Implementation would count all relations
-    // Simplified for brevity
-    
-    return relations;
-  }
+  // （原 evaluateBranchRelations / getBranchRelations 為未實現空殼，回 0，已移除：
+  //   流年支 vs 命盤地支關係統一由 analyzeTaiSuiRelation 處理，避免 double count）
   
   /**
    * Enhanced event prediction
