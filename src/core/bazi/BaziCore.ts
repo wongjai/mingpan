@@ -108,7 +108,7 @@ export class BaziCore {
     // - 月柱/換月統一走 lunar 高精度節氣
     const eightChar = lunar.getEightChar();
     eightChar.setSect(2);
-    const chart = this.buildChartFromEightChar(eightChar);
+    const chart = this.buildChartFromEightChar(eightChar, birthDate.getHours());
     
     // Step 5: Get lunar date (already calculated above)
     const rawMonth = lunar.getMonth();
@@ -195,11 +195,13 @@ export class BaziCore {
    * EightChar 已正確處理真太陽時（透過調整後的 birthDate）、節氣換月、立春換年、
    * 子時流派（setSect）。下游 chart 結構不變。
    */
-  private buildChartFromEightChar(ec: any): BaziChart {
+  private buildChartFromEightChar(ec: any, hour: number): BaziChart {
     const yg = ec.getYearGan(), yz = ec.getYearZhi();
     const mg = ec.getMonthGan(), mz = ec.getMonthZhi();
     const dg = ec.getDayGan(), dz = ec.getDayZhi();
-    const hg = ec.getTimeGan(), hz = ec.getTimeZhi();
+    // 時柱用「當日日干起時」（夜子時正統 = mingpan 原生標準，與子時不換日一致），
+    // 而非 lunar getTime 的「晚子時屬次日子時」。hour 為真太陽時調整後的小時。
+    const { hourGan: hg, hourZhi: hz } = this.calculateHourPillar(dg, hour);
     const chart: BaziChart = {
       year: this.createPillar(yg, yz),
       month: this.createPillar(mg, mz),
