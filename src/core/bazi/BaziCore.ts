@@ -22,7 +22,6 @@ import {
   getSolarTermInfo, 
   calculateSolarTerm, 
   getAdjacentSolarTermTime,
-  getTrueSolarTime,
   SOLAR_TERMS,
   SOLAR_TERM_TO_ZHI
 } from './SolarTermCalculator';
@@ -70,16 +69,9 @@ export class BaziCore {
     
     // Step 2: Apply true solar time if longitude provided
     let trueSolarTime: Date | undefined;
-    let trueSolarTimeStr: string | undefined;
     if (input.longitude !== undefined) {
-      trueSolarTimeStr = getTrueSolarTime(
-        input.year,
-        input.month,
-        input.day,
-        `${input.hour}:${input.minute || 0}:0`,
-        input.longitude
-      );
-      // Parse true solar time string back to adjust birth date
+      // 真太陽時 = 平太陽時 + 經度差 + 均時差（Jean Meeus），同時驅動四柱計算與 birthInfo 展示，二者一致。
+      // 註：原另呼叫 getTrueSolarTime() 取字串但從未使用，已移除（免重複計算，並去除對殘缺 ephemeris 的依賴）。
       trueSolarTime = TrueSolarTime.adjust(birthDate, input.longitude);
       birthDate = trueSolarTime;
     }
