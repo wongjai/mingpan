@@ -38,6 +38,8 @@ import { LiuYueCalculator } from "./services/bazi/calculators/LiuYueCalculator";
 import { LiuRiCalculator } from "./services/bazi/calculators/LiuRiCalculator";
 import { YearlyCalculator } from "./services/ziwei/calculators/YearlyCalculator";
 import { renderBaziText, renderZiweiText, FortuneTextOptions } from "./output/fortuneTextRenderer";
+import { mapBaziToManifestation } from "./services/bazi/ManifestationMapper";
+import { renderManifestationText } from "./output/manifestationTextRenderer";
 import {
   renderBaziDaYunList,
   renderBaziLiuNianList,
@@ -143,6 +145,19 @@ const BaziCalculateSchema = z.object({
   targetYear: z.number().int().optional().describe("Calculate LiuNian (流年) for this specific year"),
 });
 
+// 八字顯化指引 Schema
+const BaziManifestationSchema = z.object({
+  year: z.number().int().min(1900).max(2100).describe("出生年份（公曆，1900-2100）"),
+  month: z.number().int().min(1).max(12).describe("出生月份（1-12）"),
+  day: z.number().int().min(1).max(31).describe("出生日期（1-31）"),
+  hour: z.number().int().min(0).max(23).describe("出生時辰（0-23，24小時制）"),
+  minute: z.number().int().min(0).max(59).optional().default(0).describe("出生分鐘（0-59）"),
+  gender: z.enum(["male", "female"]).optional().default("male").describe("性別（影響大運方向）"),
+  longitude: z.number().min(-180).max(180).optional().describe("出生地經度（用於真太陽時校正，可選）"),
+  isLunar: isLunarField,
+  targetYear: z.number().int().min(1900).max(2100).optional().describe("指定分析的流年年份（可選，預設為當前年份）"),
+});
+
 const ZiweiCalculateSchema = z.object({
   year: z.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
   month: z.number().int().min(1).max(12).describe("Birth month (1-12)"),
@@ -176,14 +191,11 @@ const CombinedCalculateSchema = z.object({
 // ============================================
 
 const LiuyaoBasicSchema = z.object({
-  yaoValues: z.tuple([
-    z.union([z.literal(6), z.literal(7), z.literal(8), z.literal(9)]),
-    z.union([z.literal(6), z.literal(7), z.literal(8), z.literal(9)]),
-    z.union([z.literal(6), z.literal(7), z.literal(8), z.literal(9)]),
-    z.union([z.literal(6), z.literal(7), z.literal(8), z.literal(9)]),
-    z.union([z.literal(6), z.literal(7), z.literal(8), z.literal(9)]),
-    z.union([z.literal(6), z.literal(7), z.literal(8), z.literal(9)]),
-  ]).describe("六個爻值（自下而上，初爻到上爻）。6=老陰(動), 7=少陽(靜), 8=少陰(靜), 9=老陽(動)"),
+  // 注意：用 z.array(...).length(6) 而非 z.tuple，令 zodToJsonSchema 產出單一 items schema，
+  // ChatGPT/OpenAI 的工具 schema 不接受 tuple-form items（prefixItems）。runtime 等效。
+  yaoValues: z.array(
+    z.union([z.literal(6), z.literal(7), z.literal(8), z.literal(9)])
+  ).length(6).describe("六個爻值（自下而上，初爻到上爻）。6=老陰(動), 7=少陽(靜), 8=少陰(靜), 9=老陽(動)"),
   year: z.number().int().min(1900).max(2100).describe("起卦年份（公曆）"),
   month: z.number().int().min(1).max(12).describe("起卦月份（1-12）"),
   day: z.number().int().min(1).max(31).describe("起卦日期（1-31）"),
@@ -450,6 +462,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 用于精细的日期选择。`,
         inputSchema: schemaToJson(BaziLiuRiListSchema),
+      },
+      {
+        name: "bazi_manifestation",
+        description: `八字顯化指引（manifestation）。
+
+基於八字命盤的喜用神、十神、強弱、大運與流年，產出實用、非命定的個人成長指引：
+- 核心顯化方向（順應用神的能量）
+- 事業 / 財富 / 關係 / 健康 四大顯化主題（各含宜／忌）
+- 當前大運與流年主題、時機
+- 今日行動、日誌提問、肯定語
+
+定位為自我覺察與行動規劃的反思工具，並非吉凶預測。輸出為書面繁體結構化文本。`,
+        inputSchema: schemaToJson(BaziManifestationSchema),
       },
 
       {
@@ -1859,6 +1884,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
 
       const text = renderZiweiLiuRiList(dailyList, options);
+
+      return { content: [{ type: "text", text }] };
+    }
+
+    // === 八字顯化指引 ===
+    if (name === "bazi_manifestation") {
+      const validated = BaziManifestationSchema.parse(args);
+      const normalized = normalizeBirthInfo(validated);
+
+      const result = await baziService.calculate({
+        year: normalized.year,
+        month: normalized.month,
+        day: normalized.day,
+        hour: normalized.hour,
+        minute: normalized.minute,
+        gender: normalized.gender,
+        longitude: normalized.longitude,
+      });
+
+      if (!result.chart) {
+        throw new Error("Failed to calculate BaZi chart");
+      }
+
+      const profile = mapBaziToManifestation(result, { targetYear: validated.targetYear });
+      const text = renderManifestationText(profile);
 
       return { content: [{ type: "text", text }] };
     }
