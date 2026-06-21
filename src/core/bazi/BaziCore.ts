@@ -151,10 +151,6 @@ export class BaziCore {
   }
   
   /**
-   * Calculate four pillars based on taro-bazi logic
-   */
-
-  /**
    * 由 lunar getEightChar 組裝四柱（取代手砌的 calculateHoroscope 路徑）。
    * EightChar 已正確處理真太陽時（透過調整後的 birthDate）、節氣換月、立春換年、
    * 子時流派（setSect）。下游 chart 結構不變。
