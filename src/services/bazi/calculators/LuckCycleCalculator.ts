@@ -325,68 +325,6 @@ export class LuckCycleCalculator {
    * Calculate complete list of 10-year luck pillars (大運)
    * Usually calculates 8-10 periods covering 80-100 years
    */
-  /** @deprecated Phase 3 後大運改用 lunar getYun（見 DaYunCalculator）。此手砌起運列表已無 active caller，保留待清理。 */
-  static calLuckyList(
-    chart: BaziChart,
-    gender: Gender,
-    birthDate: Date,
-    numberOfPeriods: number = 10
-  ): DaYunPeriod[] {
-    const luckSequence = this.calLuckyAge(birthDate, gender, chart.year.stem);
-    const { direction, startAge } = luckSequence;
-    
-    // Find starting point from month pillar
-    const monthStemIndex = HEAVENLY_STEMS.findIndex(s => s.name === chart.month.stem);
-    const monthBranchIndex = EARTHLY_BRANCHES.findIndex(b => b.name === chart.month.branch);
-    
-    const periods: DaYunPeriod[] = [];
-    
-    for (let i = 0; i < numberOfPeriods; i++) {
-      // Calculate stem and branch indices
-      let stemIndex: number;
-      let branchIndex: number;
-      
-      if (direction === 'forward') {
-        stemIndex = (monthStemIndex + i + 1) % 10;
-        branchIndex = (monthBranchIndex + i + 1) % 12;
-      } else {
-        // 修复负数模运算问题：确保结果始终为正数
-        stemIndex = ((monthStemIndex - i - 1) % 10 + 10) % 10;
-        branchIndex = ((monthBranchIndex - i - 1) % 12 + 12) % 12;
-      }
-      
-      // 添加防御性检查确保索引有效
-      if (stemIndex < 0 || stemIndex >= HEAVENLY_STEMS.length || !HEAVENLY_STEMS[stemIndex]) {
-        throw new Error(`Invalid stem index: ${stemIndex} for period ${i}, monthStemIndex: ${monthStemIndex}, direction: ${direction}`);
-      }
-      
-      if (branchIndex < 0 || branchIndex >= EARTHLY_BRANCHES.length || !EARTHLY_BRANCHES[branchIndex]) {
-        throw new Error(`Invalid branch index: ${branchIndex} for period ${i}, monthBranchIndex: ${monthBranchIndex}, direction: ${direction}`);
-      }
-      
-      const stem = HEAVENLY_STEMS[stemIndex].name;
-      const branch = EARTHLY_BRANCHES[branchIndex].name;
-      
-      // Get element from stem
-      const element = HEAVENLY_STEMS[stemIndex].element;
-      
-      // Calculate void branches for this DaYun period
-      const voidBranches = this.calculateVoidBranches(stem, branch);
-      
-      periods.push({
-        index: i,
-        startAge: startAge + (i * 10),
-        endAge: startAge + ((i + 1) * 10) - 1,
-        stemBranch: { stem, branch },
-        element,
-        yinYang: HEAVENLY_STEMS[stemIndex].yinYang as 'yin' | 'yang',
-        voidBranches
-      });
-    }
-    
-    return periods;
-  }
-  
   /**
    * Calculate fleeting year list (流年)
    * Returns yearly pillars for specified years
