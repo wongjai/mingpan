@@ -4,50 +4,168 @@
  * Implements algorithms from 寿星万年历 (Longevity Star Calendar)
  */
 
-import { 
-  gregorianToJulianDay, 
+import {
+  gregorianToJulianDay,
   getSolarLongitude,
   getLightAberration,
-  getEarthNutationParameter 
+  getEarthNutationParameter
 } from '../calendar/astronomicalCalendar';
+
+/**
+ * 真太陽時可選參數（向後兼容：全缺省 = 假設北京時間 UTC+8 / 120°E，無 DST）
+ */
+export interface TstOptions {
+  /** 出生鐘錶所屬標準時區的 UTC 偏移（小時），缺省 8（北京） */
+  timezone?: number;
+  /** 顯式夏令時偏移（小時），扣減自鐘錶時間，如 1 = 撥快一小時 */
+  dstOffset?: number;
+  /** IANA 時區標識（如 'Asia/Shanghai'）；提供時由 Intl 推導標準偏移與 DST */
+  timezoneId?: string;
+}
+
+/**
+ * 真太陽時計算明細（供 output 審計與 calculate_true_solar_time tool 使用）
+ */
+export interface TstDetail {
+  adjusted: Date;
+  standardMeridian: number;            // 標準經線（度）
+  longitudeCorrectionMinutes: number;  // 經度修正（分鐘）
+  equationOfTimeMinutes: number;       // 均時差（分鐘，Jean Meeus）
+  dstOffsetMinutes: number;            // 已扣減的夏令時（分鐘）
+  totalCorrectionMinutes: number;      // 總修正（分鐘）
+  standardOffsetHours: number;         // 解析後的標準時區偏移（小時）
+  timezoneBasis: string;               // 時區依據：default-beijing | offset:N | iana:ID
+  assumedTimezone: boolean;            // 是否因未提供時區而假設北京時間（且有經度）
+}
 
 export class TrueSolarTime {
   /**
-   * Adjust clock time to true solar time with astronomical precision
+   * Adjust clock time to true solar time with astronomical precision.
+   * 向後兼容：options 缺省時等同舊版（假設北京時間 UTC+8 / 120°E、無 DST）。
    * @param date - The clock time
    * @param longitude - The longitude in degrees (positive for East, negative for West)
+   * @param options - 時區 / 夏令時可選參數
    * @returns Adjusted date/time
    */
-  static adjust(date: Date, longitude: number): Date {
-    // Convert to Julian Day for astronomical calculations
-    const jd = gregorianToJulianDay(
-      date.getFullYear(),
-      date.getMonth() + 1,
-      date.getDate(),
-      date.getHours(),
-      date.getMinutes(),
-      date.getSeconds()
-    );
-    
-    // Calculate precise equation of time
-    const equationOfTime = this.getEquationOfTime(jd);
-    
-    // Beijing standard time is UTC+8, based on 120°E longitude
-    const standardLongitude = 120;
-    
-    // Calculate time difference in minutes
-    // Every degree of longitude = 4 minutes of time
-    const timeDifferenceMinutes = (longitude - standardLongitude) * 4;
-    
-    // Total correction in minutes
-    const totalCorrectionMinutes = timeDifferenceMinutes + equationOfTime;
-    
-    // Create new date with adjustment
-    const adjustedTime = new Date(date.getTime() + totalCorrectionMinutes * 60 * 1000);
-    
-    return adjustedTime;
+  static adjust(date: Date, longitude: number, options: TstOptions = {}): Date {
+    return this.adjustWithDetail(date, longitude, options).adjusted;
   }
-  
+
+  /**
+   * 真太陽時詳細計算，暴露各項修正分量。
+   * - longitude 提供時：套用經度修正 + 均時差（真太陽時）。
+   * - longitude 缺省時：只做夏令時鐘錶校正（經度修正/均時差為 0）。
+   * 真太陽時 = 平太陽時 + 經度差 + 均時差 − 夏令時。
+   */
+  static adjustWithDetail(date: Date, longitude: number | undefined, options: TstOptions = {}): TstDetail {
+    const hasLongitude = longitude !== undefined && longitude !== null;
+
+    // 1) 解析時區：標準偏移（小時）+ 夏令時（分鐘）
+    const tz = this.resolveTimezone(date, options);
+    const standardMeridian = tz.standardOffsetHours * 15;
+
+    // 2) 經度修正 + 均時差（僅當提供經度）。
+    //    最短弧歸一化 [-180,180] 避免跨換日線時 360°（= 1440 分 = 1 日）誤差。
+    let longitudeCorrectionMinutes = 0;
+    let equationOfTimeMinutes = 0;
+    if (hasLongitude) {
+      const rawDiff = (longitude as number) - standardMeridian;
+      const longDiff = ((rawDiff + 540) % 360) - 180;
+      longitudeCorrectionMinutes = longDiff * 4;
+
+      const jd = gregorianToJulianDay(
+        date.getFullYear(), date.getMonth() + 1, date.getDate(),
+        date.getHours(), date.getMinutes(), date.getSeconds()
+      );
+      equationOfTimeMinutes = this.getEquationOfTime(jd);
+    }
+
+    // 3) 夏令時扣減（顯式 dstOffset 優先，否則中國 1986–1991 自動偵測）
+    const dstOffsetMinutes = tz.dstOffsetMinutes;
+
+    // 4) 總修正
+    const totalCorrectionMinutes = longitudeCorrectionMinutes + equationOfTimeMinutes - dstOffsetMinutes;
+    const adjusted = new Date(date.getTime() + totalCorrectionMinutes * 60 * 1000);
+
+    return {
+      adjusted,
+      standardMeridian,
+      longitudeCorrectionMinutes,
+      equationOfTimeMinutes,
+      dstOffsetMinutes,
+      totalCorrectionMinutes,
+      standardOffsetHours: tz.standardOffsetHours,
+      timezoneBasis: tz.basis,
+      assumedTimezone: tz.assumed && hasLongitude,
+    };
+  }
+
+  /**
+   * 解析標準時區偏移（小時）與夏令時（分鐘）。
+   * 優先序：IANA timezoneId → 數字 timezone → 缺省北京時間（含中國 1986–1991 自動 DST）。
+   */
+  private static resolveTimezone(date: Date, options: TstOptions): {
+    standardOffsetHours: number; dstOffsetMinutes: number; basis: string; assumed: boolean;
+  } {
+    // (a) 明確 IANA：由 Intl 推導標準偏移與 DST
+    if (options.timezoneId) {
+      const o = this.getIanaOffsets(date, options.timezoneId);
+      return {
+        standardOffsetHours: o.standardOffsetMinutes / 60,
+        dstOffsetMinutes: options.dstOffset !== undefined ? options.dstOffset * 60 : o.dstOffsetMinutes,
+        basis: `iana:${options.timezoneId}`,
+        assumed: false,
+      };
+    }
+    // (b) 明確數字 timezone：標準偏移 = timezone，DST = 顯式 dstOffset（缺省 0）
+    if (options.timezone !== undefined) {
+      return {
+        standardOffsetHours: options.timezone,
+        dstOffsetMinutes: (options.dstOffset ?? 0) * 60,
+        basis: `offset:${options.timezone}`,
+        assumed: false,
+      };
+    }
+    // (c) 缺省：假設北京時間 UTC+8。顯式 dstOffset 優先，否則中國 1986–1991 自動偵測。
+    const dst = options.dstOffset !== undefined
+      ? options.dstOffset * 60
+      : this.getChinaDstMinutes(date);
+    return { standardOffsetHours: 8, dstOffsetMinutes: dst, basis: 'default-beijing', assumed: true };
+  }
+
+  /**
+   * 中國 1986–1991 夏令時自動偵測（由 IANA Asia/Shanghai 推導）。
+   * 限定窗口，避免擾動民國時期等歷史偏移。
+   */
+  private static getChinaDstMinutes(date: Date): number {
+    const y = date.getFullYear();
+    if (y < 1986 || y > 1991) return 0;
+    return this.getIanaOffsets(date, 'Asia/Shanghai').dstOffsetMinutes;
+  }
+
+  /**
+   * 由 IANA 時區於指定瞬間取標準偏移與夏令時（分鐘）。純 Node 內置 Intl，無外部依賴。
+   * 標準偏移 = 1 月與 7 月偏移之較小者（兼容南北半球）。
+   */
+  private static getIanaOffsets(date: Date, timeZoneId: string): {
+    standardOffsetMinutes: number; dstOffsetMinutes: number;
+  } {
+    const at = (d: Date): number => {
+      const s = new Intl.DateTimeFormat('en-US', { timeZone: timeZoneId, timeZoneName: 'longOffset' })
+        .formatToParts(d).find(p => p.type === 'timeZoneName')?.value ?? 'GMT+00:00';
+      const m = s.match(/GMT([+-])(\d{2}):?(\d{2})?/);
+      if (!m) return 0;
+      const sign = m[1] === '-' ? -1 : 1;
+      return sign * (parseInt(m[2], 10) * 60 + (m[3] ? parseInt(m[3], 10) : 0));
+    };
+    const total = at(date);
+    const jan = at(new Date(Date.UTC(date.getFullYear(), 0, 1)));
+    const jul = at(new Date(Date.UTC(date.getFullYear(), 6, 1)));
+    const standardOffsetMinutes = Math.min(jan, jul);
+    const dstOffsetMinutes = Math.max(0, total - standardOffsetMinutes);
+    return { standardOffsetMinutes, dstOffsetMinutes };
+  }
+
   /**
    * Calculate the equation of time with high precision
    * This accounts for the Earth's elliptical orbit and axial tilt

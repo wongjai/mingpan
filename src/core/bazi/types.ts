@@ -74,6 +74,23 @@ export interface LunarDate {
   dayName?: string;
 }
 
+// 子時換日流派
+export type DayBoundaryMode = 'MIDNIGHT_00' | 'ZI_HOUR_23';
+
+// 真太陽時 / 時間校正明細（供 output 審計）
+export interface SolarTimeInfo {
+  applied: boolean;                    // 是否套用了任何時間校正（經度/均時差/夏令時）
+  standardMeridian: number;            // 標準經線（度）
+  longitudeCorrectionMinutes: number;  // 經度修正（分鐘）
+  equationOfTimeMinutes: number;       // 均時差（分鐘）
+  dstOffsetMinutes: number;            // 夏令時扣減（分鐘）
+  totalCorrectionMinutes: number;      // 總修正（分鐘）
+  standardOffsetHours: number;         // 標準時區偏移（小時）
+  timezoneBasis: string;               // 時區依據：default-beijing | offset:N | iana:ID
+  assumedTimezone: boolean;            // 是否假設了北京時間（未提供時區但有經度）
+  dayBoundaryMode: DayBoundaryMode;    // 子時換日流派
+}
+
 // Input/Output types for BaziCore
 export interface BaziCoreInput {
   year: number;
@@ -84,6 +101,14 @@ export interface BaziCoreInput {
   gender?: 'male' | 'female';
   isLunar?: boolean;
   longitude?: number;
+  /** 出生鐘錶標準時區 UTC 偏移（小時），缺省 8（北京） */
+  timezone?: number;
+  /** 顯式夏令時偏移（小時） */
+  dstOffset?: number;
+  /** IANA 時區標識（如 'Asia/Shanghai'） */
+  timezoneId?: string;
+  /** 子時換日流派，缺省 MIDNIGHT_00（與歷史行為一致） */
+  dayBoundaryMode?: DayBoundaryMode;
 }
 
 export interface BaziCoreResult {
@@ -97,6 +122,10 @@ export interface BaziCoreResult {
       previous: string;
       next: string;
     };
+    /** 真太陽時 / 時間校正明細 */
+    solarTimeInfo?: SolarTimeInfo;
+    /** 計算過程的提示（如未提供時區已假設北京時間） */
+    warnings?: string[];
   };
   zodiac: string;
   dayMasterElement: string;

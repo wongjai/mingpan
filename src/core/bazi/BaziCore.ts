@@ -14,7 +14,9 @@ import {
   NaYinInfo,
   LunarDate,
   BaziCoreInput,
-  BaziCoreResult
+  BaziCoreResult,
+  DayBoundaryMode,
+  SolarTimeInfo
 } from './types';
 import { HEAVENLY_STEMS, EARTHLY_BRANCHES, FIVE_ELEMENTS, HIDDEN_STEMS, NA_YIN, GROWTH_STAGE_MAPPING } from '../../core/constants/bazi';
 import { TrueSolarTime } from './TrueSolarTime';
@@ -67,14 +69,39 @@ export class BaziCore {
       input.minute || 0
     );
     
-    // Step 2: Apply true solar time if longitude provided
+    // Step 2: Apply true solar time (longitude) and/or DST clock correction.
+    //   真太陽時 = 平太陽時 + 經度差 + 均時差（Jean Meeus）− 夏令時。
+    //   即使無經度，夏令時（如中國 1986–1991）仍會校正鐘錶時間，再餵入四柱計算。
+    //   未提供時區時假設北京時間（UTC+8 / 120°E），與歷史行為一致。
+    const dayBoundaryMode: DayBoundaryMode = input.dayBoundaryMode ?? 'MIDNIGHT_00';
+    const tstDetail = TrueSolarTime.adjustWithDetail(birthDate, input.longitude, {
+      timezone: input.timezone,
+      dstOffset: input.dstOffset,
+      timezoneId: input.timezoneId,
+    });
     let trueSolarTime: Date | undefined;
     if (input.longitude !== undefined) {
-      // 真太陽時 = 平太陽時 + 經度差 + 均時差（Jean Meeus），同時驅動四柱計算與 birthInfo 展示，二者一致。
-      // 註：原另呼叫 getTrueSolarTime() 取字串但從未使用，已移除（免重複計算，並去除對殘缺 ephemeris 的依賴）。
-      trueSolarTime = TrueSolarTime.adjust(birthDate, input.longitude);
-      birthDate = trueSolarTime;
+      trueSolarTime = tstDetail.adjusted;
     }
+    // 任何非零校正（經度/均時差/夏令時）都套用到後續四柱計算；總修正為 0 時 instant 不變（向後兼容）。
+    birthDate = tstDetail.adjusted;
+
+    const warnings: string[] = [];
+    if (tstDetail.assumedTimezone) {
+      warnings.push('未提供時區，已假設 UTC+8 北京時間；海外出生請補 timezone/timezoneId 以準確校正真太陽時。');
+    }
+    const solarTimeInfo: SolarTimeInfo = {
+      applied: input.longitude !== undefined || tstDetail.totalCorrectionMinutes !== 0,
+      standardMeridian: tstDetail.standardMeridian,
+      longitudeCorrectionMinutes: tstDetail.longitudeCorrectionMinutes,
+      equationOfTimeMinutes: tstDetail.equationOfTimeMinutes,
+      dstOffsetMinutes: tstDetail.dstOffsetMinutes,
+      totalCorrectionMinutes: tstDetail.totalCorrectionMinutes,
+      standardOffsetHours: tstDetail.standardOffsetHours,
+      timezoneBasis: tstDetail.timezoneBasis,
+      assumedTimezone: tstDetail.assumedTimezone,
+      dayBoundaryMode,
+    };
     
     // Step 3: Calculate solar terms using lunar-javascript
     const solar = Solar.fromYmdHms(
@@ -107,7 +134,10 @@ export class BaziCore {
     // - 年柱用實際出生日（原 calculateYearPillar 用月中 15 號，立春前後會錯）
     // - 月柱/換月統一走 lunar 高精度節氣
     const eightChar = lunar.getEightChar();
-    eightChar.setSect(2);
+    // dayBoundaryMode 控制子時換日：
+    //   MIDNIGHT_00（缺省，sect=2）= 子時不換日，晚子時屬當日（mingpan 歷史標準）
+    //   ZI_HOUR_23（sect=1）        = 23:00 即換日，晚子時屬次日子時
+    eightChar.setSect(dayBoundaryMode === 'ZI_HOUR_23' ? 1 : 2);
     const chart = this.buildChartFromEightChar(eightChar, birthDate.getHours());
     
     // Step 5: Get lunar date (already calculated above)
@@ -139,7 +169,9 @@ export class BaziCore {
         lunar: lunarDate,
         trueSolarTime,
         solarTerm,
-        adjacentSolarTermTime
+        adjacentSolarTermTime,
+        solarTimeInfo,
+        warnings: warnings.length ? warnings : undefined
       },
       zodiac,
       dayMasterElement,

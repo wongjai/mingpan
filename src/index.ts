@@ -18,9 +18,10 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { Lunar } from "lunar-javascript";
+import { Lunar, Solar } from "lunar-javascript";
 
 import { BEIJING_TZ, normalizeBirthDateTime } from "./utils/timeNormalization";
+import { TrueSolarTime } from "./core/bazi/TrueSolarTime";
 import { BaziService } from "./services/bazi/BaziService";
 import { ZiweiService } from "./services/ziwei/ZiweiService";
 import { LiuyaoService } from "./services/liuyao/LiuyaoService";
@@ -84,6 +85,22 @@ const isLunarField = z.boolean().optional().default(false).describe(
   "Whether the input date is in lunar calendar (農曆). If true, will be converted to solar calendar internally."
 );
 
+// 真太陽時 / 時區進階參數（八字系列共用；全部可選，缺省 = 北京時間 UTC+8）
+const tstFields = {
+  timezone: z.number().min(-14).max(14).optional().describe(
+    "出生鐘錶所屬標準時區的 UTC 偏移（小時），如中國為 8、美東標準時為 -5。預設 8（北京時間）"
+  ),
+  dstOffset: z.number().min(-2).max(2).optional().describe(
+    "夏令時偏移（小時），夏令時撥快一小時填 1。中國 1986–1991 夏令時會自動偵測，無需手填"
+  ),
+  timezoneId: z.string().optional().describe(
+    "IANA 時區標識（如 'Asia/Shanghai'、'America/New_York'），提供時自動處理該區夏令時"
+  ),
+  dayBoundaryMode: z.enum(["MIDNIGHT_00", "ZI_HOUR_23"]).optional().describe(
+    "子時換日流派：MIDNIGHT_00（預設，子時不換日，晚子時屬當日）、ZI_HOUR_23（23:00 即換日，晚子時屬次日）"
+  ),
+};
+
 // Base birth info schema
 const BaseBirthInfoSchema = z.object({
   year: z.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
@@ -93,6 +110,7 @@ const BaseBirthInfoSchema = z.object({
   minute: z.number().int().min(0).max(59).optional().default(0).describe("Birth minute (0-59)"),
   gender: z.enum(["male", "female"]).describe("Gender for fortune direction calculation"),
   longitude: z.number().min(-180).max(180).optional().describe("Birth location longitude for true solar time adjustment"),
+  ...tstFields,
   isLunar: isLunarField,
   name: z.string().optional().describe("Subject name (optional)"),
 });
@@ -130,6 +148,34 @@ function normalizeBirthInfo<T extends {
   };
 }
 
+/**
+ * 渲染真太陽時 / 時間校正明細區塊（供八字 tool 輸出，提升透明度與可審計性）。
+ * 僅在有實際校正或有提示時顯示，避免對單純北京時間命盤造成輸出噪音。
+ */
+function renderBaziTimeCorrection(result: {
+  birthInfo?: { solarTimeInfo?: import("./services/bazi/types").SolarTimeInfo; warnings?: string[] };
+}): string {
+  const s = result.birthInfo?.solarTimeInfo;
+  const warnings = result.birthInfo?.warnings;
+  if (!s || (!s.applied && !(warnings && warnings.length))) return "";
+
+  const sign = (n: number) => (n > 0 ? `+${n.toFixed(1)}` : n.toFixed(1));
+  const modeText = s.dayBoundaryMode === "ZI_HOUR_23"
+    ? "ZI_HOUR_23（23:00 換日，晚子時屬次日）"
+    : "MIDNIGHT_00（子時不換日，晚子時屬當日）";
+  const lines: string[] = ["", "=== 真太陽時校正 ==="];
+  lines.push(`時區依據：${s.timezoneBasis}（標準經線 ${s.standardMeridian}°）`);
+  if (s.longitudeCorrectionMinutes !== 0) lines.push(`經度修正：${sign(s.longitudeCorrectionMinutes)} 分`);
+  if (s.equationOfTimeMinutes !== 0) lines.push(`均時差：${sign(s.equationOfTimeMinutes)} 分`);
+  if (s.dstOffsetMinutes !== 0) lines.push(`夏令時扣減：${s.dstOffsetMinutes} 分`);
+  lines.push(`總修正：${sign(s.totalCorrectionMinutes)} 分`);
+  lines.push(`子時流派：${modeText}`);
+  if (warnings && warnings.length) {
+    for (const w of warnings) lines.push(`⚠️ ${w}`);
+  }
+  return lines.join("\n");
+}
+
 const BaziCalculateSchema = z.object({
   year: z.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
   month: z.number().int().min(1).max(12).describe("Birth month (1-12)"),
@@ -138,6 +184,7 @@ const BaziCalculateSchema = z.object({
   minute: z.number().int().min(0).max(59).optional().default(0).describe("Birth minute (0-59)"),
   gender: z.enum(["male", "female"]).optional().default("male").describe("Gender for DaYun calculation direction"),
   longitude: z.number().min(-180).max(180).optional().describe("Birth location longitude for true solar time adjustment"),
+  ...tstFields,
   isLunar: isLunarField,
   detail: z.enum(["simple", "standard", "detailed"]).optional().default("standard").describe("Output detail level"),
   includeAnalysis: z.boolean().optional().default(true).describe("Include strength and pattern analysis"),
@@ -154,6 +201,7 @@ const BaziManifestationSchema = z.object({
   minute: z.number().int().min(0).max(59).optional().default(0).describe("出生分鐘（0-59）"),
   gender: z.enum(["male", "female"]).optional().default("male").describe("性別（影響大運方向）"),
   longitude: z.number().min(-180).max(180).optional().describe("出生地經度（用於真太陽時校正，可選）"),
+  ...tstFields,
   isLunar: isLunarField,
   targetYear: z.number().int().min(1900).max(2100).optional().describe("指定分析的流年年份（可選，預設為當前年份）"),
 });
@@ -180,10 +228,39 @@ const CombinedCalculateSchema = z.object({
   minute: z.number().int().min(0).max(59).optional().default(0).describe("Birth minute (0-59)"),
   gender: z.enum(["male", "female"]).describe("Gender (required for both calculations)"),
   longitude: z.number().min(-180).max(180).optional().describe("Birth location longitude for true solar time adjustment"),
+  ...tstFields,
   isLunar: isLunarField,
   detail: z.enum(["simple", "standard", "detailed"]).optional().default("standard").describe("Output detail level"),
   targetYear: z.number().int().optional().describe("Calculate yearly fortune for this specific year"),
   systems: z.array(z.enum(["bazi", "ziwei"])).optional().default(["bazi", "ziwei"]).describe("Which systems to calculate"),
+});
+
+// ============================================
+// 真太陽時 Schema
+// ============================================
+
+const TrueSolarTimeSchema = z.object({
+  year: z.number().int().min(1900).max(2100).describe("年份（公曆，1900-2100）"),
+  month: z.number().int().min(1).max(12).describe("月份（1-12）"),
+  day: z.number().int().min(1).max(31).describe("日期（1-31）"),
+  hour: z.number().int().min(0).max(23).describe("時（0-23，24小時制）"),
+  minute: z.number().int().min(0).max(59).optional().default(0).describe("分（0-59）"),
+  longitude: z.number().min(-180).max(180).describe("出生地經度（必填，東經為正、西經為負）"),
+  timezone: z.number().min(-14).max(14).optional().describe("標準時區 UTC 偏移（小時），預設 8（北京）"),
+  dstOffset: z.number().min(-2).max(2).optional().describe("夏令時偏移（小時）。中國 1986–1991 會自動偵測"),
+  timezoneId: z.string().optional().describe("IANA 時區標識（如 'Asia/Shanghai'、'America/New_York'）"),
+});
+
+// ============================================
+// 八字反查 Schema
+// ============================================
+
+const ReverseBaziSchema = z.object({
+  bazi: z.string().describe("四柱干支，以空格分隔，例如：戊寅 己未 己卯 辛未"),
+  startYear: z.number().int().min(1900).max(2100).optional().default(1940).describe("反查起始年（公曆），預設 1940"),
+  endYear: z.number().int().min(1900).max(2100).optional().describe("反查結束年（公曆），預設當前年"),
+  dayBoundaryMode: z.enum(["MIDNIGHT_00", "ZI_HOUR_23"]).optional().default("MIDNIGHT_00").describe("子時換日流派，需與目標八字一致"),
+  limit: z.number().int().min(1).max(100).optional().default(20).describe("最多返回幾個候選時間，預設 20"),
 });
 
 // ============================================
@@ -358,15 +435,34 @@ const ZiweiLiuRiListSchema = BaseBirthInfoSchema.extend({
 // Create Server
 // ============================================
 
+const SERVER_VERSION = "0.1.4";
+
+/** 四捨五入至 2 位小數，消除浮點雜訊（供 structuredContent 數值欄位） */
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+// 所有命理/占卜 tool 皆為確定性、唯讀計算（不改外部狀態、可重複、不訪問開放世界）。
+const READONLY_ANNOTATIONS = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} as const;
+
 const server = new Server(
   {
     name: "mingpan",
-    version: "0.1.3",
+    version: SERVER_VERSION,
   },
   {
     capabilities: {
       tools: {},
     },
+    instructions: [
+      "命盤（Mingpan）提供確定性的中華術數排盤與占卜計算（八字、紫微、奇門、六爻、梅花、大六壬）。",
+      "請一律使用本服務的工具計算，切勿用語言模型自行推算干支、四柱、節氣、農曆轉換或排盤。",
+      "八字精算需要出生地經度與時區：若涉及海外或夏令時，請向使用者索取 longitude 與 timezone/timezoneId。",
+      "工具回傳的 structuredContent 與校正 metadata（真太陽時、子時流派、時區依據）為權威來源，請勿覆寫或重算。",
+    ].join("\n"),
   }
 );
 
@@ -375,8 +471,7 @@ const server = new Server(
 // ============================================
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
+  const tools = [
       {
         name: "bazi_basic",
         description: `计算八字命盘（基础排盘）。
@@ -475,6 +570,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 定位為自我覺察與行動規劃的反思工具，並非吉凶預測。輸出為書面繁體結構化文本。`,
         inputSchema: schemaToJson(BaziManifestationSchema),
+      },
+      {
+        name: "bazi_true_solar_time",
+        description: `真太陽時換算（八字精準排盤的時間基礎）。
+
+由出生鐘錶時間 + 經度 + 時區，計算真太陽時：
+- 經度修正（每度 4 分鐘，相對標準經線）
+- 均時差（Jean Meeus 高精度公式）
+- 夏令時扣減（中國 1986–1991 自動偵測；其他地區可傳 timezoneId 或 dstOffset）
+
+用於解釋「為何時柱與鐘錶時間不同」，或在排盤前先確認時辰是否臨界換柱。`,
+        inputSchema: schemaToJson(TrueSolarTimeSchema),
+      },
+      {
+        name: "bazi_reverse",
+        description: `八字反查（由四柱反推可能的公曆出生時間）。
+
+當只有一張命盤（或截圖）而不知出生日期時，暴力搜尋所有產生該四柱的公曆時間：
+- 輸入四柱干支字串（空格分隔），如「戊寅 己未 己卯 辛未」
+- 可指定搜尋年份範圍與子時流派
+- 返回候選的公曆年月日時
+
+注意：反查使用鐘錶時間排盤（不含真太陽時校正）。確定候選後，建議再用 bazi_basic 補經度/時區精算。`,
+        inputSchema: schemaToJson(ReverseBaziSchema),
       },
 
       {
@@ -720,7 +839,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 - 365天：< 60秒`,
         inputSchema: schemaToJson(QimenZeRiSchema),
       },
-    ],
+  ];
+  // 為所有 tool 注入唯讀 annotations（MCP 協議規範；客戶端可據此判斷安全/可快取）
+  return {
+    tools: tools.map((t) => ({ annotations: READONLY_ANNOTATIONS, ...t })),
   };
 });
 
@@ -826,6 +948,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         minute: normalized.minute,
         gender: normalized.gender,
         longitude: normalized.longitude,
+        timezone: normalized.timezone,
+        dstOffset: normalized.dstOffset,
+        timezoneId: normalized.timezoneId,
+        dayBoundaryMode: normalized.dayBoundaryMode,
         useLunar: false,  // Already converted to solar if needed
       });
 
@@ -856,13 +982,166 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         options
       );
 
+      const sti = result.birthInfo?.solarTimeInfo;
+      const p = (pi: any) => (pi ? `${pi.stem}${pi.branch}` : "");
+      const structured = {
+        pillars: {
+          year: p(result.chart?.year),
+          month: p(result.chart?.month),
+          day: p(result.chart?.day),
+          hour: p(result.chart?.hour),
+        },
+        dayMaster: result.basic?.dayMaster,
+        dayMasterElement: result.basic?.dayMasterElement,
+        fiveElements: result.basic?.fiveElements,
+        tenGods: result.basic?.tenGods,
+        solarTimeInfo: sti,
+        warnings: result.birthInfo?.warnings ?? [],
+        metadata: {
+          trueSolarTimeApplied: sti?.applied ?? false,
+          dayBoundaryMode: sti?.dayBoundaryMode ?? "MIDNIGHT_00",
+          timezoneBasis: sti?.timezoneBasis ?? null,
+          dstOffsetMinutes: sti?.dstOffsetMinutes ?? 0,
+          version: SERVER_VERSION,
+        },
+      };
+
       return {
         content: [
           {
             type: "text",
-            text: text + liuNianInfo,
+            text: text + liuNianInfo + renderBaziTimeCorrection(result),
           },
         ],
+        structuredContent: structured,
+      };
+    }
+
+    if (name === "bazi_true_solar_time") {
+      const v = TrueSolarTimeSchema.parse(args);
+      const civil = new Date(v.year, v.month - 1, v.day, v.hour, v.minute);
+      const d = TrueSolarTime.adjustWithDetail(civil, v.longitude, {
+        timezone: v.timezone,
+        dstOffset: v.dstOffset,
+        timezoneId: v.timezoneId,
+      });
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const fmt = (dt: Date) =>
+        `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+      const sign = (n: number) => (n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2));
+      const utcSign = d.standardOffsetHours >= 0 ? "+" : "";
+      const lines: string[] = [
+        "=== 真太陽時換算 ===",
+        `鐘錶時間：${fmt(civil)}`,
+        `真太陽時：${fmt(d.adjusted)}`,
+        "",
+        `時區依據：${d.timezoneBasis}（標準經線 ${d.standardMeridian}°，UTC${utcSign}${d.standardOffsetHours}）`,
+        `經度修正：${sign(d.longitudeCorrectionMinutes)} 分`,
+        `均時差（Meeus）：${sign(d.equationOfTimeMinutes)} 分`,
+        `夏令時扣減：${d.dstOffsetMinutes} 分`,
+        `總修正：${sign(d.totalCorrectionMinutes)} 分`,
+      ];
+      if (d.assumedTimezone) {
+        lines.push("⚠️ 未提供時區，已假設 UTC+8 北京時間；海外請補 timezone/timezoneId 以準確校正。");
+      }
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        structuredContent: {
+          civilTime: fmt(civil),
+          trueSolarTime: fmt(d.adjusted),
+          standardMeridian: d.standardMeridian,
+          standardOffsetHours: d.standardOffsetHours,
+          longitudeCorrectionMinutes: round2(d.longitudeCorrectionMinutes),
+          equationOfTimeMinutes: round2(d.equationOfTimeMinutes),
+          dstOffsetMinutes: d.dstOffsetMinutes,
+          totalCorrectionMinutes: round2(d.totalCorrectionMinutes),
+          timezoneBasis: d.timezoneBasis,
+          assumedTimezone: d.assumedTimezone,
+        },
+      };
+    }
+
+    if (name === "bazi_reverse") {
+      const v = ReverseBaziSchema.parse(args);
+      const target = v.bazi.trim().split(/\s+/).filter(Boolean);
+      if (target.length !== 4) {
+        return {
+          content: [{ type: "text", text: "輸入需為四柱干支，以空格分隔，例如：戊寅 己未 己卯 辛未" }],
+          isError: true,
+        };
+      }
+      const endYear = v.endYear ?? new Date().getFullYear();
+      if (endYear < v.startYear) {
+        return { content: [{ type: "text", text: "endYear 不可小於 startYear" }], isError: true };
+      }
+
+      const sect = v.dayBoundaryMode === "ZI_HOUR_23" ? 1 : 2;
+      // 時柱用 mingpan 一致的五鼠遁（當日日干起時），確保反查結果餵回 bazi_basic 會得同一盤。
+      const HS = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"];
+      const EB = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"];
+      const FIVE_RATS: Record<string, string> = {
+        甲: "甲", 己: "甲", 乙: "丙", 庚: "丙", 丙: "戊", 辛: "戊", 丁: "庚", 壬: "庚", 戊: "壬", 癸: "壬",
+      };
+      const hourPillar = (dayGan: string, hour: number): string => {
+        const start = HS.indexOf(FIVE_RATS[dayGan]);
+        const zhiIndex = Math.ceil(hour / 2) % 12;
+        return HS[(start + zhiIndex) % 10] + EB[zhiIndex];
+      };
+      const pad = (n: number) => String(n).padStart(2, "0");
+
+      const matches: string[] = [];
+      let truncated = false;
+      outer: for (let y = v.startYear; y <= endYear; y++) {
+        // 年柱過濾：以年中（6/1）的年柱代表整年（立春後），不符即整年跳過（大幅加速）。
+        const yearEc = Solar.fromYmdHms(y, 6, 1, 12, 0, 0).getLunar().getEightChar();
+        if (yearEc.getYearGan() + yearEc.getYearZhi() !== target[0]) continue;
+        for (let mo = 1; mo <= 12; mo++) {
+          const daysInMonth = new Date(y, mo, 0).getDate();
+          for (let d = 1; d <= daysInMonth; d++) {
+            for (let h = 0; h <= 23; h++) {
+              const ec = Solar.fromYmdHms(y, mo, d, h, 0, 0).getLunar().getEightChar();
+              ec.setSect(sect);
+              const yp = ec.getYearGan() + ec.getYearZhi();
+              if (yp !== target[0]) continue;
+              const mp = ec.getMonthGan() + ec.getMonthZhi();
+              if (mp !== target[1]) continue;
+              const dp = ec.getDayGan() + ec.getDayZhi();
+              if (dp !== target[2]) continue;
+              const hp = hourPillar(ec.getDayGan(), h);
+              if (hp !== target[3]) continue;
+              matches.push(`${y}-${pad(mo)}-${pad(d)} ${pad(h)}:00`);
+              if (matches.length >= v.limit) {
+                truncated = true;
+                break outer;
+              }
+            }
+          }
+        }
+      }
+
+      const lines: string[] = [
+        `=== 八字反查：${v.bazi} ===`,
+        `搜尋範圍：${v.startYear}–${endYear}　子時流派：${v.dayBoundaryMode}`,
+        `找到 ${matches.length} 個候選${truncated ? "（已達上限，可能還有更多）" : ""}：`,
+      ];
+      if (matches.length === 0) {
+        lines.push("（範圍內無匹配。請確認四柱與子時流派是否一致，或擴大年份範圍。）");
+      } else {
+        for (const m of matches) lines.push(`  ${m}`);
+      }
+      lines.push("");
+      lines.push("註：反查使用鐘錶時間排盤（不含真太陽時校正）。確定候選後，建議用 bazi_basic 補經度/時區精算。");
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        structuredContent: {
+          bazi: v.bazi,
+          startYear: v.startYear,
+          endYear,
+          dayBoundaryMode: v.dayBoundaryMode,
+          matchCount: matches.length,
+          truncated,
+          candidates: matches,
+        },
       };
     }
 
@@ -901,6 +1180,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text,
           },
         ],
+        structuredContent: { palaces: result.palaces, mutagen: result.mutagenInfo },
       };
     }
 
@@ -927,6 +1207,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text,
           },
         ],
+        structuredContent: { result },
       };
     }
 
@@ -956,6 +1237,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text,
           },
         ],
+        structuredContent: { result },
       };
     }
 
@@ -982,6 +1264,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text,
           },
         ],
+        structuredContent: { result },
       };
     }
 
@@ -1013,6 +1296,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text,
           },
         ],
+        structuredContent: { result },
       };
     }
     // === 奇門遁甲用神 ===
@@ -1051,6 +1335,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text,
           },
         ],
+        structuredContent: { result },
       };
     }
 
@@ -1084,6 +1369,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text,
           },
         ],
+        structuredContent: { candidates: results },
       };
     }
 
@@ -1102,6 +1388,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         minute: normalized.minute,
         gender: normalized.gender,
         longitude: normalized.longitude,
+        timezone: normalized.timezone,
+        dstOffset: normalized.dstOffset,
+        timezoneId: normalized.timezoneId,
+        dayBoundaryMode: normalized.dayBoundaryMode,
       });
 
       if (!result.chart || !result.birthInfo) {
@@ -1139,9 +1429,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         startYear,
       };
 
-      const text = renderBaziDaYunList(daYunList.slice(0, validated.count), options);
+      const daYunOut = daYunList.slice(0, validated.count);
+      const text = renderBaziDaYunList(daYunOut, options);
 
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text }], structuredContent: { daYun: daYunOut } };
     }
 
     if (name === "bazi_liunian") {
@@ -1157,6 +1448,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         minute: normalized.minute,
         gender: normalized.gender,
         longitude: normalized.longitude,
+        timezone: normalized.timezone,
+        dstOffset: normalized.dstOffset,
+        timezoneId: normalized.timezoneId,
+        dayBoundaryMode: normalized.dayBoundaryMode,
       });
 
       if (!result.chart || !result.birthInfo) {
@@ -1199,7 +1494,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const text = renderBaziLiuNianList(liuNianList, options);
 
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text }], structuredContent: { liuNian: liuNianList } };
     }
 
     if (name === "bazi_liuyue") {
@@ -1216,6 +1511,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         minute: normalized.minute,
         gender: normalized.gender,
         longitude: normalized.longitude,
+        timezone: normalized.timezone,
+        dstOffset: normalized.dstOffset,
+        timezoneId: normalized.timezoneId,
+        dayBoundaryMode: normalized.dayBoundaryMode,
       });
 
       if (!result.chart || !result.birthInfo) {
@@ -1303,7 +1602,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const text = renderBaziLiuYueList(liuYueList, options);
 
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text }], structuredContent: { liuYue: liuYueList } };
     }
 
     if (name === "bazi_liuri") {
@@ -1321,6 +1620,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         minute: normalized.minute,
         gender: normalized.gender,
         longitude: normalized.longitude,
+        timezone: normalized.timezone,
+        dstOffset: normalized.dstOffset,
+        timezoneId: normalized.timezoneId,
+        dayBoundaryMode: normalized.dayBoundaryMode,
       });
 
       if (!result.chart || !result.birthInfo) {
@@ -1420,7 +1723,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const text = renderBaziLiuRiList(liuRiList, options);
 
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text }], structuredContent: { liuRi: liuRiList } };
     }
 
     // === ZiWei List Tool Handlers ===
@@ -1480,9 +1783,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         direction,
       };
 
-      const text = renderZiweiDaXianList(result.decades.slice(0, validated.count), options);
+      const daXianOut = result.decades.slice(0, validated.count);
+      const text = renderZiweiDaXianList(daXianOut, options);
 
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text }], structuredContent: { daXian: daXianOut } };
     }
 
     if (name === "ziwei_xiaoxian") {
@@ -1550,7 +1854,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const text = renderZiweiXiaoXianList(minorLimitList, options);
 
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text }], structuredContent: { xiaoXian: minorLimitList } };
     }
 
     if (name === "ziwei_liunian") {
@@ -1606,7 +1910,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const text = renderZiweiLiuNianList(yearlyList, options);
 
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text }], structuredContent: { liuNian: yearlyList } };
     }
 
     if (name === "ziwei_liuyue") {
@@ -1710,7 +2014,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const text = renderZiweiLiuYueList(monthlyList, options);
 
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text }], structuredContent: { liuYue: monthlyList } };
     }
 
     if (name === "ziwei_liuri") {
@@ -1885,7 +2189,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const text = renderZiweiLiuRiList(dailyList, options);
 
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text }], structuredContent: { liuRi: dailyList } };
     }
 
     // === 八字顯化指引 ===
@@ -1901,6 +2205,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         minute: normalized.minute,
         gender: normalized.gender,
         longitude: normalized.longitude,
+        timezone: normalized.timezone,
+        dstOffset: normalized.dstOffset,
+        timezoneId: normalized.timezoneId,
+        dayBoundaryMode: normalized.dayBoundaryMode,
       });
 
       if (!result.chart) {
@@ -1910,7 +2218,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const profile = mapBaziToManifestation(result, { targetYear: validated.targetYear });
       const text = renderManifestationText(profile);
 
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text }], structuredContent: { profile } };
     }
 
     throw new Error(`Unknown tool: ${name}`);
@@ -1937,7 +2245,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  logger.info("Mingpan MCP server started (v0.1.3)");
+  logger.info(`Mingpan MCP server started (v${SERVER_VERSION})`);
 }
 
 main().catch((error) => {

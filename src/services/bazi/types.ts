@@ -3,6 +3,10 @@
  * Comprehensive types for the unified BaZi service
  */
 
+// 真太陽時 / 時間校正明細與子時流派（單一真理來源於 core 層）
+import type { SolarTimeInfo, DayBoundaryMode } from '../../core/bazi/types';
+export type { SolarTimeInfo, DayBoundaryMode };
+
 // Basic Types
 export type Language = 'zh-TW' | 'zh-CN' | 'en' | 'ja';
 export type Gender = 'male' | 'female';
@@ -17,6 +21,10 @@ export interface BaziInput {
   minute?: number;
   gender?: Gender;
   longitude?: number; // For true solar time adjustment
+  timezone?: number; // 出生鐘錶標準時區 UTC 偏移（小時），缺省 8（北京）
+  dstOffset?: number; // 顯式夏令時偏移（小時）
+  timezoneId?: string; // IANA 時區標識（如 'Asia/Shanghai'）
+  dayBoundaryMode?: 'MIDNIGHT_00' | 'ZI_HOUR_23'; // 子時換日流派，缺省 MIDNIGHT_00
   name?: string; // Optional name for personal reference
   useLunar?: boolean; // Whether to use lunar calendar
   options?: BaziOptions;
@@ -463,8 +471,10 @@ export interface BaziResult {
       previous: string;
       next: string;
     };
+    solarTimeInfo?: SolarTimeInfo;
+    warnings?: string[];
   };
-  
+
   // Basic Analysis
   basic: {
     zodiac: string;

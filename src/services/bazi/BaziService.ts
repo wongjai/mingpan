@@ -133,7 +133,11 @@ export class BaziService {
         hour: input.hour,
         minute: input.minute,
         gender: input.gender,
-        longitude: input.longitude
+        longitude: input.longitude,
+        timezone: input.timezone,
+        dstOffset: input.dstOffset,
+        timezoneId: input.timezoneId,
+        dayBoundaryMode: input.dayBoundaryMode
       });
       
       this.debug(`Core calculation completed in ${Date.now() - startTime}ms`, {
@@ -460,7 +464,9 @@ export class BaziService {
           lunar: coreResult.birthInfo.lunar,
           trueSolarTime: coreResult.birthInfo.trueSolarTime,
           solarTerm: coreResult.birthInfo.solarTerm,
-          adjacentSolarTermTime: coreResult.birthInfo.adjacentSolarTermTime
+          adjacentSolarTermTime: coreResult.birthInfo.adjacentSolarTermTime,
+          solarTimeInfo: coreResult.birthInfo.solarTimeInfo,
+          warnings: coreResult.birthInfo.warnings
         },
         basic,
         traditional,
@@ -677,8 +683,12 @@ export class BaziService {
    * Generate cache key from input
    */
   private generateCacheKey(input: BaziInput): string {
-    const { year, month, day, hour, minute = 0, gender = 'male', longitude = 0, options = {} } = input;
-    return `${year}-${month}-${day}-${hour}:${minute}-${gender}-${longitude}-${JSON.stringify(options)}`;
+    const {
+      year, month, day, hour, minute = 0, gender = 'male', longitude = 0,
+      timezone = '', dstOffset = '', timezoneId = '', dayBoundaryMode = '',
+      options = {}
+    } = input;
+    return `${year}-${month}-${day}-${hour}:${minute}-${gender}-${longitude}-${timezone}-${dstOffset}-${timezoneId}-${dayBoundaryMode}-${JSON.stringify(options)}`;
   }
   
   /**
