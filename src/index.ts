@@ -12,6 +12,8 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "node:http";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -435,7 +437,7 @@ const ZiweiLiuRiListSchema = BaseBirthInfoSchema.extend({
 // Create Server
 // ============================================
 
-const SERVER_VERSION = "0.1.4";
+const SERVER_VERSION = "0.1.5";
 
 /** 四捨五入至 2 位小數，消除浮點雜訊（供 structuredContent 數值欄位） */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -2242,7 +2244,114 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Start Server
 // ============================================
 
+// 讀取並解析 JSON 請求體（HTTP 模式用）
+function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    let aborted = false;
+    req.on("data", (chunk) => {
+      if (aborted) return;
+      raw += chunk;
+      if (raw.length > 4_000_000) {
+        aborted = true;
+        req.destroy();
+        reject(new Error("Request body too large"));
+      }
+    });
+    req.on("end", () => {
+      if (aborted) return;
+      if (!raw) return resolve(undefined);
+      try {
+        resolve(JSON.parse(raw));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on("error", (error) => {
+      if (aborted) return;
+      reject(error);
+    });
+  });
+}
+
+// Streamable HTTP（stateless）入口：
+// - sessionIdGenerator: undefined → 不發 session id，重啟/閒置都不會令 ChatGPT 端 session 失效
+// - enableJsonResponse: true → 直接回單次 JSON，不開長 SSE stream，避開 Cloudflare Tunnel 的 idle timeout
+// 單一 transport 連接一次，所有請求經 handleRequest 依 JSON-RPC id 對應回各自的 res。
+async function startHttpServer(): Promise<void> {
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true,
+  });
+  await server.connect(transport);
+
+  const port = Number(process.env.PORT) || 8000;
+  const mcpPath = process.env.MCP_PATH || "/mcp";
+
+  const httpServer = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
+    const path = (req.url || "").split("?")[0];
+
+    if (req.method === "GET" && (path === "/healthz" || path === "/health")) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", version: SERVER_VERSION }));
+      return;
+    }
+
+    if (path === mcpPath) {
+      // Stateless 模式只需 POST（request/response）。GET（standalone SSE）與 DELETE（session
+      // teardown）在 sessionIdGenerator=undefined 下無意義；尤其 DELETE 會令 transport.close()
+      // 觸發，永久廢掉共享 transport（server 變死但 /healthz 仍回 200）。故一律只放行 POST。
+      if (req.method !== "POST") {
+        res.writeHead(405, { "Content-Type": "application/json", "Allow": "POST" });
+        res.end(JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Method Not Allowed: only POST is supported in stateless mode" },
+          id: null,
+        }));
+        return;
+      }
+      try {
+        const body = await readJsonBody(req);
+        await transport.handleRequest(req, res, body);
+      } catch (error) {
+        logger.error("MCP HTTP request failed", error as Error);
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32603, message: "Internal server error" },
+            id: null,
+          }));
+        }
+      }
+      return;
+    }
+
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Not found" }));
+  });
+
+  httpServer.listen(port, () => {
+    logger.info(
+      `Mingpan MCP server started (v${SERVER_VERSION}) — Streamable HTTP (stateless) on :${port}${mcpPath}`
+    );
+  });
+
+  // Docker stop 先發 SIGTERM：先收掉新連線、放完手上請求才退出
+  const shutdown = () => {
+    logger.info("Shutting down MCP HTTP server...");
+    httpServer.close(() => process.exit(0));
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+}
+
 async function main() {
+  const useHttp = process.argv.includes("--http") || process.env.MCP_HTTP === "1";
+  if (useHttp) {
+    await startHttpServer();
+    return;
+  }
   const transport = new StdioServerTransport();
   await server.connect(transport);
   logger.info(`Mingpan MCP server started (v${SERVER_VERSION})`);

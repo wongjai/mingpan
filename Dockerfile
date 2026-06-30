@@ -12,8 +12,14 @@ RUN npm install --ignore-scripts
 COPY src ./src
 RUN npm run build
 
-# supergateway 將 stdio MCP 包成 Streamable HTTP
-RUN npm install -g supergateway
-
+# 內置原生 Streamable HTTP（stateless）入口，取代 supergateway：
+# sessionIdGenerator=undefined + enableJsonResponse → 重啟/閒置都不會令 ChatGPT 端 session 失效，
+# 亦避開 Cloudflare Tunnel 對長連線的 idle timeout
+ENV MCP_HTTP=1
+ENV PORT=8000
 EXPOSE 8000
-CMD ["supergateway","--stdio","node /app/dist/index.js","--outputTransport","streamableHttp","--streamableHttpPath","/mcp","--port","8000"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:8000/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+
+CMD ["node", "/app/dist/index.js", "--http"]
