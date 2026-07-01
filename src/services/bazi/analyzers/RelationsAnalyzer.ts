@@ -161,7 +161,7 @@ export class RelationsAnalyzer {
       { stem: chart.day.stem, position: '日柱' },
       { stem: chart.hour.stem, position: '時柱' }
     ];
-    
+
     const branches = [
       { branch: chart.year.branch, position: '年柱' },
       { branch: chart.month.branch, position: '月柱' },
@@ -169,6 +169,34 @@ export class RelationsAnalyzer {
       { branch: chart.hour.branch, position: '時柱' }
     ];
 
+    return this.runDetections(stems, branches);
+  }
+
+  /**
+   * Analyze an arbitrary labeled pillar set (e.g. natal + 流月, 大運 + 流月).
+   * Reuses the exact same detection helpers as {@link analyze} but is not
+   * locked to the four natal positions, so it can cross-analyze 流月 against
+   * natal pillars / 大運 / 流年.
+   *
+   * Position labels may be any string (e.g. '流月', '大運', '流年'); unknown
+   * labels degrade gracefully to a '遥' (distant) positional relationship.
+   */
+  static analyzePillarSet(
+    pillars: Array<{ stem: string; branch: string; position: string }>
+  ): RelationsResult {
+    const stems = pillars.map(p => ({ stem: p.stem, position: p.position }));
+    const branches = pillars.map(p => ({ branch: p.branch, position: p.position }));
+    return this.runDetections(stems, branches);
+  }
+
+  /**
+   * Shared detection pipeline over generic stem/branch position lists.
+   * Detection logic is unchanged; only the entry point is generalized.
+   */
+  private static runDetections(
+    stems: Array<{ stem: string; position: string }>,
+    branches: Array<{ branch: string; position: string }>
+  ): RelationsResult {
     const result: RelationsResult = {
       // Heavenly Stem Relations
       stemCombinations: this.findStemCombinations(stems),
@@ -605,10 +633,12 @@ export class RelationsAnalyzer {
 
     for (const group of threeHarmonyGroups) {
       const foundBranches = branches.filter(b => group.branches.includes(b.branch));
-      
-      if (foundBranches.length >= 2) {
+      // Gate on DISTINCT trine members: duplicate identical branches (e.g. 酉+酉) are 自刑, not any 合
+      const distinct = [...new Set(foundBranches.map(b => b.branch))];
+
+      if (distinct.length >= 2) {
         // Even partial three harmonies are significant
-        const baseStrength = foundBranches.length === 3 ? group.strength : group.strength - 2;
+        const baseStrength = distinct.length === 3 ? group.strength : group.strength - 2;
         
         // Calculate position analysis for multi-branch relations
         const positions = foundBranches.map(f => f.position);
@@ -631,7 +661,7 @@ export class RelationsAnalyzer {
         }
         
         // Special case for three-way harmonies
-        if (foundBranches.length === 3) {
+        if (distinct.length === 3) {
           const indices = positions.map(p => {
             const key = getPositionKeyByName(p as any) || p;
             return this.POSITION_INDEX[key as keyof typeof this.POSITION_INDEX];
@@ -719,9 +749,11 @@ export class RelationsAnalyzer {
 
     for (const group of threeMeetingGroups) {
       const foundBranches = branches.filter(b => group.branches.includes(b.branch));
-      
-      if (foundBranches.length >= 2) {
-        const baseStrength = foundBranches.length === 3 ? group.strength : group.strength - 2;
+      // Gate on DISTINCT trine members: duplicate identical branches (e.g. 酉+酉) are 自刑, not any 會
+      const distinct = [...new Set(foundBranches.map(b => b.branch))];
+
+      if (distinct.length >= 2) {
+        const baseStrength = distinct.length === 3 ? group.strength : group.strength - 2;
         
         // Calculate position analysis for multi-branch relations
         const positions = foundBranches.map(f => f.position);
@@ -744,7 +776,7 @@ export class RelationsAnalyzer {
         }
         
         // Special case for three meetings - consecutive positions are especially powerful
-        if (foundBranches.length === 3) {
+        if (distinct.length === 3) {
           const indices = positions.map(p => {
             const key = getPositionKeyByName(p as any) || p;
             return this.POSITION_INDEX[key as keyof typeof this.POSITION_INDEX];

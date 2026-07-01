@@ -236,7 +236,7 @@ export class TraditionalAnalyzer {
             pattern: `follow_${dominantElement}`,
             type: '从格',
             quality: '优秀',
-            description: `follow_pattern_${dominantElement}`
+            description: this.generateGeJuDescription(`follow_${dominantElement}`, '从格', '优秀')
           };
         }
       }
@@ -248,7 +248,7 @@ export class TraditionalAnalyzer {
         pattern: 'specialized_strong',
         type: 'specialized_strong',
         quality: '优秀',
-        description: 'specialized_strong_pattern'
+        description: this.generateGeJuDescription('specialized_strong', 'specialized_strong', '优秀')
       };
     }
     
@@ -308,12 +308,64 @@ export class TraditionalAnalyzer {
     dayMasterElement: string,
     yongShen: string[]
   ): string {
-    // Return a key that can be translated at the display layer
-    return `yongshen_explanation:${strength}:${dayMasterElement}:${yongShen.join(',')}`;
+    // Map day master strength (身強/身弱) to a concise Traditional description
+    const strengthDesc: Record<string, string> = {
+      '衰极': '日主衰極，極弱無氣',
+      '身弱': '日主身弱',
+      '偏弱': '日主偏弱',
+      '中和': '日主中和',
+      '偏强': '日主偏強',
+      '身旺': '日主身旺',
+      '旺极': '日主旺極，強盛之至'
+    };
+    const strengthText = strengthDesc[strength] || `日主${strength}`;
+    const yongShenText = yongShen.length > 0 ? yongShen.join('、') : '無';
+    return `${strengthText}，${dayMasterElement}命，宜取${yongShenText}為用神以調候扶抑。`;
   }
-  
+
   private static generateGeJuDescription(pattern: string, type: string, quality: string): string {
-    // Return a key that can be translated at the display layer
-    return `geju_description:${pattern}:${type}:${quality}`;
+    // Map pattern code → 格局名（Traditional Chinese）
+    const patternNames: Record<string, string> = {
+      'jianlu': '建祿格',
+      'seal': '印綬格',
+      'wealth': '財格',
+      'officer': '官殺格',
+      'output': '食傷格',
+      'specialized_strong': '專旺格'
+    };
+    // follow_木/火/土/金/水 → 從X格（從格）
+    let patternName = patternNames[pattern];
+    if (!patternName) {
+      if (pattern.startsWith('follow_')) {
+        const element = pattern.slice('follow_'.length);
+        patternName = `從${element}格`;
+      } else {
+        patternName = '正格';
+      }
+    }
+
+    // Map type code → 身強/身弱/格局屬性（Traditional Chinese）
+    const typeNames: Record<string, string> = {
+      'strong_body': '身強',
+      'weak_body': '身弱',
+      'seal': '印綬',
+      'wealth': '財星',
+      'officer': '官殺',
+      'output': '食傷',
+      'specialized_strong': '一氣專旺',
+      '从格': '順從旺神'
+    };
+    const typeText = typeNames[type] || (type ? type : '格局平常');
+
+    // Map quality (may be Simplified from producer) → Traditional
+    const qualityNames: Record<string, string> = {
+      '优秀': '優秀',
+      '良好': '良好',
+      '一般': '一般',
+      '较差': '較差'
+    };
+    const qualityText = qualityNames[quality] || quality || '一般';
+
+    return `${patternName}，${typeText}，格局${qualityText}。`;
   }
 }

@@ -437,7 +437,7 @@ const ZiweiLiuRiListSchema = BaseBirthInfoSchema.extend({
 // Create Server
 // ============================================
 
-const SERVER_VERSION = "0.1.5";
+const SERVER_VERSION = "0.1.6";
 
 /** 四捨五入至 2 位小數，消除浮點雜訊（供 structuredContent 數值欄位） */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -986,19 +986,105 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       const sti = result.birthInfo?.solarTimeInfo;
       const p = (pi: any) => (pi ? `${pi.stem}${pi.branch}` : "");
+
+      // Normalize element fields that may be a string, array, or undefined.
+      const toElemArray = (v: any): string[] =>
+        Array.isArray(v) ? v.filter(Boolean) : v ? [v] : [];
+
+      const sa = result.enhanced?.strengthAnalysis;
+      const pa = result.enhanced?.patternAnalysis;
+      const br = result.enhanced?.branchRelations;
+      const yg = result.traditional?.yongShen;
+
+      // Collect warnings; may be extended by uncertainty checks below.
+      const warnings: string[] = [...(result.birthInfo?.warnings ?? [])];
+
+      // --- Strength (heuristic scoring → medium confidence) ---
+      const strength = {
+        level: sa?.dayMasterStrength ?? result.traditional?.strength,
+        score: sa?.totalScore,
+        percentage: sa?.percentage,
+        breakdown: sa?.breakdown,
+        reasoning: sa?.details ?? [],
+        summary: sa?.analysis,
+        confidence: "medium",
+      };
+
+      // --- Pattern (use enhanced.patternAnalysis, NOT traditional.geJu) ---
+      const primaryPattern = pa?.primaryPattern;
+      const pattern = {
+        primary: primaryPattern,
+        secondary: pa?.secondaryPatterns ?? [],
+        // primaryPattern.strength is 1-10 confidence in identification
+        confidence:
+          typeof primaryPattern?.strength === "number" && primaryPattern.strength >= 7
+            ? "high"
+            : "medium",
+      };
+
+      // --- Useful god (yongShen) ---
+      const yongShenArr = toElemArray(yg?.yongShen);
+      const xiShenArr = toElemArray(yg?.xiShen);
+      const jiShenArr = toElemArray(yg?.jiShen);
+      const xianShenArr = toElemArray(yg?.xianShen);
+      const favorableElements = [...new Set([...yongShenArr, ...xiShenArr])];
+      const uncertaintyReasons: string[] = [];
+      let usefulGodConfidence: "high" | "medium" | "low";
+      if (yongShenArr.length === 0) {
+        usefulGodConfidence = "low";
+        uncertaintyReasons.push("用神分析未能得出明確結果");
+        warnings.push("用神分析未能得出明確結果，favorableElements 可能不完整");
+      } else {
+        // Heuristic system: honest confidence is "medium" even when populated.
+        usefulGodConfidence = "medium";
+      }
+      const usefulGod = {
+        yongShen: yongShenArr,
+        xiShen: xiShenArr,
+        jiShen: jiShenArr,
+        xianShen: xianShenArr,
+        favorableElements,
+        unfavorableElements: jiShenArr,
+        explanation: yg?.explanation,
+        confidence: usefulGodConfidence,
+        uncertaintyReasons,
+      };
+
+      // --- Interactions (from enhanced.branchRelations) ---
+      const interactions = {
+        combinations: [
+          ...(br?.stemCombinations ?? []),
+          ...(br?.sixHarmonies ?? []),
+          ...(br?.threeHarmonies ?? []),
+          ...(br?.threeMeetings ?? []),
+        ],
+        clashes: br?.sixConflicts ?? [],
+        harms: br?.sixHarms ?? [],
+        punishments: br?.threePunishments ?? [],
+        destructions: br?.sixDestructions ?? [],
+      };
+
       const structured = {
-        pillars: {
-          year: p(result.chart?.year),
-          month: p(result.chart?.month),
-          day: p(result.chart?.day),
-          hour: p(result.chart?.hour),
+        calculation: {
+          pillars: {
+            year: p(result.chart?.year),
+            month: p(result.chart?.month),
+            day: p(result.chart?.day),
+            hour: p(result.chart?.hour),
+          },
+          dayMaster: result.basic?.dayMaster,
+          dayMasterElement: result.basic?.dayMasterElement,
+          fiveElements: result.basic?.fiveElements,
+          tenGods: result.basic?.tenGods,
+          shenSha: result.basic?.shenSha ?? [],
+          solarTimeInfo: sti,
         },
-        dayMaster: result.basic?.dayMaster,
-        dayMasterElement: result.basic?.dayMasterElement,
-        fiveElements: result.basic?.fiveElements,
-        tenGods: result.basic?.tenGods,
-        solarTimeInfo: sti,
-        warnings: result.birthInfo?.warnings ?? [],
+        analysis: {
+          strength,
+          pattern,
+          usefulGod,
+          interactions,
+        },
         metadata: {
           trueSolarTimeApplied: sti?.applied ?? false,
           dayBoundaryMode: sti?.dayBoundaryMode ?? "MIDNIGHT_00",
@@ -1006,6 +1092,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           dstOffsetMinutes: sti?.dstOffsetMinutes ?? 0,
           version: SERVER_VERSION,
         },
+        warnings,
       };
 
       return {
@@ -1566,6 +1653,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      // Natal pillars for month cross-analysis (十神 / 合沖刑害破)
+      const natalPillars = [
+        { stem: result.chart.year.stem, branch: result.chart.year.branch, position: '年柱' },
+        { stem: result.chart.month.stem, branch: result.chart.month.branch, position: '月柱' },
+        { stem: result.chart.day.stem, branch: result.chart.day.branch, position: '日柱' },
+        { stem: result.chart.hour.stem, branch: result.chart.hour.branch, position: '時柱' },
+      ];
+
       // Calculate LiuYue
       const calculator = new LiuYueCalculator();
       const liuYueList = calculator.calculateLiuYue(
@@ -1580,7 +1675,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           hour: normalized.hour,
           minute: normalized.minute,
         },
-        gregorianYear
+        gregorianYear,
+        {
+          dayMaster: result.chart.day.stem,
+          natalPillars,
+          currentDaYun: currentDaYun
+            ? { stem: currentDaYun.stem, branch: currentDaYun.branch }
+            : undefined,
+          currentLiuNian: currentLiuNian
+            ? { stem: currentLiuNian.stem, branch: currentLiuNian.branch }
+            : undefined,
+        }
       );
 
       const options = {

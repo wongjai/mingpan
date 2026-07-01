@@ -1,6 +1,6 @@
 # 命盘 MCP Server
 
-[![Version](https://img.shields.io/badge/version-0.1.5-blue.svg)](https://github.com/ChesterRa/mingpan)
+[![Version](https://img.shields.io/badge/version-0.1.6-blue.svg)](https://github.com/ChesterRa/mingpan)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 
 **命盘（Mingpan）** 是一个中华传统术数 MCP 服务，为 Claude 等 AI 应用提供命理排盘与占卜起卦的计算能力。

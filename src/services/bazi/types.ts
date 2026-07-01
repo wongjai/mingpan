@@ -313,10 +313,47 @@ export interface FortunePrediction {
 }
 
 // Liu Yue (Monthly) Types
+
+// 流月互動：命局/大運/流年 與 流月柱之間偵測到的合沖刑害破（僅涉及流月柱者）
+export interface LiuYueInteraction {
+  type: string;        // 六合/六沖/六害/三刑/六破/三合/三會/天干五合
+  description: string;  // 例如「卯酉相沖」
+  branches: string[];
+  positions: string[];  // 涉及的柱位（含 '流月'）
+  impact: '正面' | '负面' | '中性';
+  strength: number;
+}
+
+export interface LiuYueInteractions {
+  withNatal: LiuYueInteraction[];
+  withDaYun: LiuYueInteraction[];
+  withLiuNian: LiuYueInteraction[];
+}
+
+export interface LiuYueTenGods {
+  stem: string;   // 月干對日主之十神
+  branch: string; // 月支本氣對日主之十神
+}
+
+export interface LiuYueDomainDetail {
+  summary: string;
+  opportunities?: string[];
+  risks?: string[];
+  recommendations?: string[];
+}
+
+export interface LiuYueDomainGuidance {
+  career: LiuYueDomainDetail;
+  wealth: LiuYueDomainDetail;
+  relationship: LiuYueDomainDetail;
+  health: LiuYueDomainDetail;
+}
+
 export interface LiuYueInfo {
   month: number;
   stem: Stem;
   branch: Branch;
+  ganZhi?: string;
   startDate: Date;
   endDate: Date;
   fortune: string;
@@ -331,6 +368,13 @@ export interface LiuYueInfo {
     name: string;
     date: Date;
   };
+  // 新增：月度深度解讀層
+  tenGods?: LiuYueTenGods;
+  interactions?: LiuYueInteractions;
+  ratingReasoning?: string[];        // 繁體中文，說明評分理由
+  domainGuidance?: LiuYueDomainGuidance;
+  confidence?: 'high' | 'medium' | 'low';
+  warnings?: string[];
 }
 
 export interface LiuYue {

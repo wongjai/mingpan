@@ -482,6 +482,54 @@ export function renderBaziLiuYueList(
     lines.push(`注：${lastMonth.stem}${lastMonth.branch}月雖然公曆日期在${lastMonth.endDate.getFullYear()}年，但仍屬於${options.ganzhiYear}干支年。`);
   }
 
+  // === 流月深度解讀 ===（干支月 + 十神 + 命中互動 + 評分理由 + 各領域提示）
+  const hasAnalysis = liuYueList.some(m => m.tenGods || m.ratingReasoning || m.interactions);
+  if (hasAnalysis) {
+    lines.push('');
+    lines.push('=== 流月深度解讀 ===');
+
+    for (const m of liuYueList) {
+      lines.push('');
+      lines.push(`【${m.stem}${m.branch}月】評分 ${m.rating}（${m.fortune}）${m.confidence ? `｜可信度：${m.confidence}` : ''}`);
+
+      if (m.tenGods) {
+        lines.push(`  十神：干=${m.tenGods.stem || '—'}　支=${m.tenGods.branch || '—'}`);
+      }
+
+      // 命中互動（合併命局/大運/流年，僅列涉及流月柱者）
+      const interLines: string[] = [];
+      if (m.interactions) {
+        const fmt = (list?: { type: string; description: string }[]) =>
+          (list || []).map(i => `${i.description}(${i.type})`);
+        const natal = fmt(m.interactions.withNatal);
+        const daYun = fmt(m.interactions.withDaYun);
+        const liuNian = fmt(m.interactions.withLiuNian);
+        if (natal.length) interLines.push(`命局—${natal.join('、')}`);
+        if (daYun.length) interLines.push(`大運—${daYun.join('、')}`);
+        if (liuNian.length) interLines.push(`流年—${liuNian.join('、')}`);
+      }
+      lines.push(`  命中互動：${interLines.length ? interLines.join('；') : '無明顯合沖刑害破'}`);
+
+      // 評分理由（取重點數條，避免過長）
+      if (m.ratingReasoning && m.ratingReasoning.length) {
+        const reasons = m.ratingReasoning.filter(r => !r.startsWith('綜合評定'));
+        lines.push(`  評分理由：${reasons.join(' ')}`);
+      }
+
+      // 各領域一句提示
+      if (m.domainGuidance) {
+        lines.push(`  事業：${m.domainGuidance.career.summary}`);
+        lines.push(`  財富：${m.domainGuidance.wealth.summary}`);
+        lines.push(`  感情：${m.domainGuidance.relationship.summary}`);
+        lines.push(`  健康：${m.domainGuidance.health.summary}`);
+      }
+
+      if (m.warnings && m.warnings.length) {
+        lines.push(`  ⚠ ${m.warnings.join('；')}`);
+      }
+    }
+  }
+
   return lines.join('\n');
 }
 

@@ -52,8 +52,11 @@ export class YongShenAnalyzer {
       analysis = this.analyzeNormalPattern(chart, dayMasterElement, strengthAnalysis, patternAnalysis, climateAnalysis);
     }
     
-    // Add explanation based on the analysis method
-    analysis.explanation = this.generateExplanation(analysis, pattern, strengthAnalysis.dayMasterStrength);
+    // Add explanation based on the analysis method.
+    // Preserve a specific explanation already set by the analyzer (e.g. 中和 調候/通關 fallback).
+    if (!analysis.explanation) {
+      analysis.explanation = this.generateExplanation(analysis, pattern, strengthAnalysis.dayMasterStrength);
+    }
     
     return analysis;
   }
@@ -73,7 +76,8 @@ export class YongShenAnalyzer {
     const xiShen: string[] = [];
     const jiShen: string[] = [];
     const xianShen: string[] = [];
-    
+    let explanation = '';
+
     if (strength === '身弱' || strength === '衰极' || strength === '偏弱') {
       // Weak day master needs support
       // YongShen: Elements that generate or same as day master
@@ -131,23 +135,43 @@ export class YongShenAnalyzer {
       
       // JiShen: Excessive elements
       jiShen.push(...excessiveElements);
+
+      // Fallback: nothing missing/excessive (e.g. 五行俱全) → 中和 chart with empty YongShen.
+      // Determine YongShen via 調候 (climate) first, then 通關 (circulation) when climate is neutral.
+      if (missingElements.length === 0 && excessiveElements.length === 0) {
+        const climate = this.getClimateYongShen(climateAnalysis);
+        if (climate) {
+          yongShen.push(climate.yongShen);
+          xiShen.push(climate.xiShen);
+          jiShen.push(climate.jiShen);
+          explanation = climate.explanation;
+        } else {
+          // 通關/circulation: drain then control the day master, keeping it flowing.
+          const drainingElement = FIVE_ELEMENTS_RELATIONS.generating[dayMasterElement as keyof typeof FIVE_ELEMENTS_RELATIONS.generating];
+          const controllingElement = FIVE_ELEMENTS_RELATIONS.restrictBy[dayMasterElement as keyof typeof FIVE_ELEMENTS_RELATIONS.restrictBy];
+          const wealthElement = FIVE_ELEMENTS_RELATIONS.controlling[dayMasterElement as keyof typeof FIVE_ELEMENTS_RELATIONS.controlling];
+          yongShen.push(controllingElement);
+          xiShen.push(wealthElement, drainingElement);
+          explanation = `日主中和，五行流通，取${controllingElement}為用神調節其勢，以${wealthElement}、${drainingElement}為喜通關流轉。`;
+        }
+      }
     }
-    
-    // XianShen: Remaining neutral elements
+
+    // XianShen: Remaining neutral elements (computed AFTER yong/xi/ji populated)
     FIVE_ELEMENTS_ARRAY.forEach((elem) => {
       if (!yongShen.includes(elem) && !xiShen.includes(elem) && !jiShen.includes(elem)) {
         xianShen.push(elem);
       }
     });
-    
+
     const analysis: YongShenAnalysis = {
       yongShen,
       xiShen,
       jiShen,
       xianShen,
-      explanation: ''
+      explanation
     };
-    
+
     // Generate recommendations
     analysis.recommendations = this.generateRecommendations(
       analysis,
@@ -156,10 +180,41 @@ export class YongShenAnalyzer {
       patternAnalysis,
       climateAnalysis
     );
-    
+
     return analysis;
   }
-  
+
+  /**
+   * Shared 調候 (climate) YongShen mapping.
+   * Reuses the exact element choices from analyzeClimateFirst.
+   * Note: ClimateAnalyzer emits Chinese temperature values (寒/凉/中性/暖/热),
+   * so match those here. Returns null when temperature is neutral/unknown.
+   */
+  private static getClimateYongShen(
+    climateAnalysis?: any
+  ): { yongShen: string; xiShen: string; jiShen: string; explanation: string } | null {
+    const temperature = climateAnalysis?.temperature;
+    if (temperature === '热' || temperature === '暖') {
+      // Too hot - Water regulates, Metal generates Water, Fire aggravates
+      return {
+        yongShen: '水',
+        xiShen: '金',
+        jiShen: '火',
+        explanation: '日主中和，取調候用神：命局炎燥，以水潤之、金生水為喜，忌火助熱。'
+      };
+    }
+    if (temperature === '寒' || temperature === '凉') {
+      // Too cold - Fire warms, Wood feeds Fire, Water aggravates
+      return {
+        yongShen: '火',
+        xiShen: '木',
+        jiShen: '水',
+        explanation: '日主中和，取調候用神：命局寒凝，以火暖之、木生火為喜，忌水助寒。'
+      };
+    }
+    return null;
+  }
+
   /**
    * Analyze based on pattern recommendations from PatternAnalyzer
    */
