@@ -109,6 +109,14 @@ export class TrueSolarTime {
   } {
     // (a) 明確 IANA：由 Intl 推導標準偏移與 DST
     if (options.timezoneId) {
+      // 先驗證 IANA id，否則深層 Intl 錯誤只會上拋一句「calculation failed」，用戶唔知邊度錯
+      try {
+        new Intl.DateTimeFormat(undefined, { timeZone: options.timezoneId });
+      } catch {
+        throw new Error(
+          `無效的 timezoneId：「${options.timezoneId}」，請用 IANA 時區格式（如 Asia/Hong_Kong、America/New_York）`
+        );
+      }
       const o = this.getIanaOffsets(date, options.timezoneId);
       return {
         standardOffsetHours: o.standardOffsetMinutes / 60,

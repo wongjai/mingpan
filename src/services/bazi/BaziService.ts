@@ -519,8 +519,11 @@ export class BaziService {
         throw error;
       }
       this.debug('❌ Original error in calculation', error);
+      // 保留底層錯誤訊息（如「無效的 timezoneId」「無效的公曆日期」），
+      // 否則用戶只見到一句 generic failed，無從定位邊個參數出錯
+      const detail = error instanceof Error && error.message ? `: ${error.message}` : '';
       throw new BaziCalculationError(
-        'BaZi calculation failed',
+        `BaZi calculation failed${detail}`,
         'CALCULATION_FAILED',
         error
       );
@@ -684,10 +687,13 @@ export class BaziService {
    */
   private generateCacheKey(input: BaziInput): string {
     const {
-      year, month, day, hour, minute = 0, gender = 'male', longitude = 0,
+      year, month, day, hour, minute = 0, gender = 'male',
       timezone = '', dstOffset = '', timezoneId = '', dayBoundaryMode = '',
       options = {}
     } = input;
+    // 注意：longitude 不可用 0 做缺省 sentinel —— 「未提供經度」（不做真太陽時修正）
+    // 與「明確經度 0°」（格林威治，-480 分修正）是兩張不同的盤，撞 key 會互相污染快取。
+    const longitude = input.longitude === undefined ? 'none' : input.longitude;
     return `${year}-${month}-${day}-${hour}:${minute}-${gender}-${longitude}-${timezone}-${dstOffset}-${timezoneId}-${dayBoundaryMode}-${JSON.stringify(options)}`;
   }
   

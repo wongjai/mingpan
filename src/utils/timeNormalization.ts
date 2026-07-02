@@ -62,12 +62,28 @@ export interface NormalizedBirthDateTime {
  * normalizeBirthDateTime({ year: 1990, month: 4, day: 21, hour: 10, isLunar: true })
  * // { year: 1990, month: 5, day: 15, hour: 10, minute: 0, isLunarInput: true }
  */
+/**
+ * 驗證公曆日期真實存在。JS Date 會將 2/30 靜默滾去 3/2（rollover），
+ * 令打錯日期的用戶攞到一張錯盤而毫無警告 —— 這裡直接報錯。
+ */
+export function assertValidSolarDate(year: number, month: number, day: number): void {
+  const d = new Date(year, month - 1, day);
+  if (
+    d.getFullYear() !== year ||
+    d.getMonth() !== month - 1 ||
+    d.getDate() !== day
+  ) {
+    throw new Error(`無效的公曆日期：${year}年${month}月${day}日不存在，請檢查輸入`);
+  }
+}
+
 export function normalizeBirthDateTime(input: BirthDateTimeInput): NormalizedBirthDateTime {
   const minute = input.minute ?? 0;
   const isLunarInput = !!input.isLunar;
 
-  // 公曆輸入：直接返回
+  // 公曆輸入：先驗證日期真實存在（Date 會將 2/30 靜默滾去 3/2，造成無警告錯盤）
   if (!isLunarInput) {
+    assertValidSolarDate(input.year, input.month, input.day);
     return {
       year: input.year,
       month: input.month,

@@ -22,8 +22,8 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { Lunar, Solar } from "lunar-javascript";
 
-import { BEIJING_TZ, normalizeBirthDateTime } from "./utils/timeNormalization";
-import { coercedBoolean } from "./utils/coerce";
+import { BEIJING_TZ, assertValidSolarDate, normalizeBirthDateTime } from "./utils/timeNormalization";
+import { coercedBoolean, numifyNumericStrings, sanitizeToolArgs } from "./utils/coerce";
 import { TrueSolarTime } from "./core/bazi/TrueSolarTime";
 import { BaziService } from "./services/bazi/BaziService";
 import { ZiweiService } from "./services/ziwei/ZiweiService";
@@ -274,7 +274,8 @@ const LiuyaoBasicSchema = z.object({
   // 注意：用 z.array(...).length(6) 而非 z.tuple，令 zodToJsonSchema 產出單一 items schema，
   // ChatGPT/OpenAI 的工具 schema 不接受 tuple-form items（prefixItems）。runtime 等效。
   yaoValues: z.array(
-    z.union([z.literal(6), z.literal(7), z.literal(8), z.literal(9)])
+    // numify：literal union 冇 coerce，Claude web 等 client 會傳 "6" 字串
+    z.preprocess(numifyNumericStrings, z.union([z.literal(6), z.literal(7), z.literal(8), z.literal(9)]))
   ).length(6).describe("六個爻值（自下而上，初爻到上爻）。6=老陰(動), 7=少陽(靜), 8=少陰(靜), 9=老陽(動)"),
   year: z.coerce.number().int().min(1900).max(2100).describe("起卦年份（公曆）"),
   month: z.coerce.number().int().min(1).max(12).describe("起卦月份（1-12）"),
@@ -310,7 +311,7 @@ const DaliurenBasicSchema = z.object({
   lunarMonth: z.coerce.number().int().min(1).max(12).describe("農曆月份（1-12）"),
   dayGanZhi: z.string().describe("日干支（如：甲子、乙丑等）"),
   hourGanZhi: z.string().describe("時干支（如：甲子、乙丑等）"),
-  guirenMethod: z.union([z.literal(0), z.literal(1)]).optional().default(0).describe("貴人起法：0=標準, 1=另一種"),
+  guirenMethod: z.preprocess(numifyNumericStrings, z.union([z.literal(0), z.literal(1)])).optional().default(0).describe("貴人起法：0=標準, 1=另一種"),
 });
 
 // ============================================
@@ -438,7 +439,7 @@ const ZiweiLiuRiListSchema = BaseBirthInfoSchema.extend({
 // Create Server
 // ============================================
 
-const SERVER_VERSION = "0.1.7";
+const SERVER_VERSION = "0.1.8";
 
 /** 四捨五入至 2 位小數，消除浮點雜訊（供 structuredContent 數值欄位） */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -876,6 +877,10 @@ function parseGanzhiYear(input: string | number): { year: number; ganzhi: string
     input = Number(input.trim());
   }
   if (typeof input === 'number') {
+    // schema 的 union string 分支冇 min/max，數字字串轉數後必須補範圍驗證
+    if (input < 1900 || input > 2100) {
+      throw new Error(`年份超出支援範圍（1900-2100）：${input}`);
+    }
     const { stem, branch } = getYearStemBranch(input);
     return { year: input, ganzhi: stem + branch };
   }
@@ -887,9 +892,8 @@ function parseGanzhiYear(input: string | number): { year: number; ganzhi: string
       return { year: y, ganzhi: input };
     }
   }
-  // Default to current year if not found
-  const { stem, branch } = getYearStemBranch(currentYear);
-  return { year: currentYear, ganzhi: stem + branch };
+  // 搵唔到就報錯，唔好靜默用當年（silent wrong year）
+  throw new Error(`無法識別的干支年：「${input}」，請用干支（如 乙巳）或公曆年份（如 2025）`);
 }
 
 // Helper: Parse GanZhi month input
@@ -899,13 +903,20 @@ function parseGanzhiMonth(input: string | number): number {
     input = Number(input.trim());
   }
   if (typeof input === 'number') {
+    // schema 的 union string 分支冇 min/max，數字字串轉數後必須補範圍驗證
+    if (input < 1 || input > 12) {
+      throw new Error(`月份超出範圍（1-12）：${input}`);
+    }
     return input; // 1-12
   }
   // Parse GanZhi month string to get month index
   const BRANCHES = ['寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥', '子', '丑'];
   const branch = input.substring(1, 2);
   const idx = BRANCHES.indexOf(branch);
-  return idx >= 0 ? idx + 1 : 1;
+  if (idx < 0) {
+    throw new Error(`無法識別的干支月：「${input}」，請用干支（如 丙寅）或月數（1-12，1=寅月）`);
+  }
+  return idx + 1;
 }
 
 // Helper: Get month stem branch for a given year and month
@@ -941,7 +952,9 @@ function getMonthStemBranch(year: number, monthNum: number): { stem: string; bra
 }
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+  const { name, arguments: rawArgs } = request.params;
+  // ""/null → 當「無提供」刪走，避免 z.coerce.number() 將空字串靜默變 0（錯盤級 footgun）
+  const args = sanitizeToolArgs(rawArgs) as Record<string, unknown> | undefined;
 
   logger.info(`Tool called: ${name}`, args);
 
@@ -1117,6 +1130,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (name === "bazi_true_solar_time") {
       const v = TrueSolarTimeSchema.parse(args);
+      assertValidSolarDate(v.year, v.month, v.day);
       const civil = new Date(v.year, v.month - 1, v.day, v.hour, v.minute);
       const d = TrueSolarTime.adjustWithDetail(civil, v.longitude, {
         timezone: v.timezone,
@@ -1190,10 +1204,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const matches: string[] = [];
       let truncated = false;
       outer: for (let y = v.startYear; y <= endYear; y++) {
-        // 年柱過濾：以年中（6/1）的年柱代表整年（立春後），不符即整年跳過（大幅加速）。
-        const yearEc = Solar.fromYmdHms(y, 6, 1, 12, 0, 0).getLunar().getEightChar();
-        if (yearEc.getYearGan() + yearEc.getYearZhi() !== target[0]) continue;
-        for (let mo = 1; mo <= 12; mo++) {
+        // 年柱過濾（加速）：公曆年 y 內可能出現兩個干支年 —— 立春前（1月~立春）屬上一干支年，
+        // 立春後屬本干支年。以 6/1 樣本代表「立春後」；若上一年 6/1 樣本匹配，則 y 年年頭
+        // （立春前）都可能命中，必須照掃（內層逐時精確核對年柱，不會誤報）。
+        // 修正：舊邏輯只查本年 6/1，會漏掉所有立春前出生（如 1994-01 出生嘅癸酉年人）。
+        const sampleYearPillar = (yy: number): string => {
+          const e = Solar.fromYmdHms(yy, 6, 1, 12, 0, 0).getLunar().getEightChar();
+          return e.getYearGan() + e.getYearZhi();
+        };
+        const matchesAfterLichun = sampleYearPillar(y) === target[0];
+        const matchesBeforeLichun = sampleYearPillar(y - 1) === target[0];
+        if (!matchesAfterLichun && !matchesBeforeLichun) continue;
+        // 只匹配立春前段時，最多掃到 2 月尾（立春最遲 2/5 前後）即可，慳返 10 個月
+        const maxMonth = matchesAfterLichun ? 12 : 2;
+        for (let mo = 1; mo <= maxMonth; mo++) {
           const daysInMonth = new Date(y, mo, 0).getDate();
           for (let d = 1; d <= daysInMonth; d++) {
             for (let h = 0; h <= 23; h++) {
@@ -1286,7 +1310,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (name === "liuyao_basic") {
       const validated = LiuyaoBasicSchema.parse(args);
-      
+      // 日期驗證由 LiuyaoService 內部 normalizeBirthDateTime 處理
+
       const result = liuyaoService.calculate({
         yaoValues: validated.yaoValues as [6|7|8|9, 6|7|8|9, 6|7|8|9, 6|7|8|9, 6|7|8|9, 6|7|8|9],
         year: validated.year,
@@ -1313,7 +1338,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (name === "meihua_basic") {
       const validated = MeihuaBasicSchema.parse(args);
-      
+      // 日期驗證由 MeihuaService 內部 normalizeBirthDateTime 處理
+
       const result = meihuaService.calculate({
         method: validated.method,
         year: validated.year,
@@ -1439,6 +1465,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (name === "qimen_zeri") {
       const validated = QimenZeRiSchema.parse(args);
+      assertValidSolarDate(validated.startYear, validated.startMonth, validated.startDay);
+      assertValidSolarDate(validated.endYear, validated.endMonth, validated.endDay);
 
       const qimenService = new QimenService();
       const results = qimenService.findAuspiciousDates({
