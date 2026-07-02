@@ -7,6 +7,7 @@ export type FortuneTextOptions = {
   detail?: 'simple' | 'standard' | 'detailed';
   includePersonal?: boolean;
   includeLocation?: boolean;
+  includeAnalysis?: boolean;
 };
 
 export type BaziTimeLabels = {
@@ -172,18 +173,178 @@ export function renderBaziText(
   lines.push('');
 
   lines.push('=== 八字命盤 ===');
-  const yc: any = bazi.chart?.year;
-  const mc: any = bazi.chart?.month;
-  const dc: any = bazi.chart?.day;
-  const hc: any = bazi.chart?.hour;
-  lines.push(`年柱：${yc?.stem || ''}${yc?.branch || ''} 月柱：${mc?.stem || ''}${mc?.branch || ''} 日柱：${dc?.stem || ''}${dc?.branch || ''} 時柱：${hc?.stem || ''}${hc?.branch || ''}`.trim());
+  const pillarDefs = [
+    { key: 'year', label: '年柱' },
+    { key: 'month', label: '月柱' },
+    { key: 'day', label: '日柱' },
+    { key: 'hour', label: '時柱' },
+  ] as const;
+  for (const p of pillarDefs) {
+    const pillar: any = (bazi.chart as any)?.[p.key];
+    if (!pillar) continue;
+    const hidden = (pillar.hiddenStems || []).map((hs: any) => hs.stem).join('、');
+    lines.push(`${p.label}：${pillar.stem || ''}${pillar.branch || ''}${hidden ? `（藏干：${hidden}）` : ''}`);
+  }
   if (bazi.basic?.dayMaster) lines.push(`日主：${bazi.basic.dayMaster}`);
   if (timeLabels?.dayun) lines.push(`目標大運：${timeLabels.dayun}`);
   if (timeLabels?.liunian) lines.push(`目標流年：${timeLabels.liunian}`);
   if (timeLabels?.liuyue) lines.push(`目標流月：${timeLabels.liuyue}`);
   if (timeLabels?.liuri) lines.push(`目標流日：${timeLabels.liuri}`);
   lines.push('');
+
+  // detail=simple：命主資料 + 四柱 + 日主，到此為止（analysis / 大運另由 handler 控制）
+  const detail = options.detail || 'standard';
+  const includeAnalysis = options.includeAnalysis !== false;
+  if (detail !== 'simple' && includeAnalysis) {
+    lines.push(...renderBaziAnalysisSections(bazi, detail === 'detailed'));
+  }
+
   return lines.join('\n');
+}
+
+/**
+ * 渲染 standard/detailed 分級共用的分析區塊：五行力量、日主強弱、格局、用神、十神、神煞、原局刑沖合害。
+ * 抽出成獨立函式以維持 renderBaziText 主體精簡；detailed=true 時每個區塊附加更多細節。
+ */
+function renderBaziAnalysisSections(bazi: BaziResult, detailed: boolean): string[] {
+  const lines: string[] = [];
+  const fmtNum = (n: unknown): string => {
+    if (typeof n !== 'number' || Number.isNaN(n)) return '—';
+    return Number.isInteger(n) ? String(n) : n.toFixed(1);
+  };
+
+  // --- 五行力量 ---
+  const fe: any = bazi.basic?.fiveElements;
+  if (fe) {
+    lines.push('=== 五行力量 ===');
+    lines.push(`木${fmtNum(fe.木)} 火${fmtNum(fe.火)} 土${fmtNum(fe.土)} 金${fmtNum(fe.金)} 水${fmtNum(fe.水)}（共${fmtNum(fe.total)}）`);
+    const balance = fe.balance;
+    if (balance) {
+      const missing = balance.missing?.length ? `　缺：${balance.missing.join('、')}` : '';
+      lines.push(`最旺：${balance.strongest || '—'}　最弱：${balance.weakest || '—'}${missing}`);
+    }
+    lines.push('');
+  }
+
+  // --- 日主強弱 ---
+  const sa: any = bazi.enhanced?.strengthAnalysis;
+  if (sa) {
+    lines.push('=== 日主強弱 ===');
+    lines.push(`${sa.dayMasterStrength}（得分 ${fmtNum(sa.totalScore)}，${fmtNum(sa.percentage)}%）`);
+    if (sa.analysis) lines.push(sa.analysis);
+    if (detailed) {
+      if (sa.details?.length) {
+        lines.push('細項：');
+        for (const d of sa.details) {
+          lines.push(`- ${d.item}：${fmtNum(d.finalScore ?? d.score)}`);
+        }
+      }
+      if (sa.characteristics?.length) lines.push(`特徵：${sa.characteristics.join('、')}`);
+      if (sa.recommendations?.length) lines.push(`建議：${sa.recommendations.join('、')}`);
+    }
+    lines.push('');
+  }
+
+  // --- 格局（用 enhanced.patternAnalysis，NOT traditional.geJu） ---
+  const pa: any = bazi.enhanced?.patternAnalysis;
+  const primaryPattern = pa?.primaryPattern;
+  if (primaryPattern) {
+    lines.push('=== 格局 ===');
+    lines.push(primaryPattern.type || '—');
+    if (primaryPattern.description) lines.push(primaryPattern.description);
+    if (detailed && pa?.secondaryPatterns?.length) {
+      for (const sp of pa.secondaryPatterns) {
+        lines.push(`次要格局：${sp.type}${sp.description ? `（${sp.description}）` : ''}`);
+      }
+    }
+    lines.push('');
+  }
+
+  // --- 用神 ---
+  const yg: any = bazi.traditional?.yongShen;
+  if (yg) {
+    lines.push('=== 用神 ===');
+    const toArr = (v: any): string[] => (Array.isArray(v) ? v.filter(Boolean) : v ? [v] : []);
+    const yongShenArr = toArr(yg.yongShen);
+    const xiShenArr = toArr(yg.xiShen);
+    const jiShenArr = toArr(yg.jiShen);
+    if (yongShenArr.length === 0) {
+      lines.push('用神分析未能得出明確結果');
+    } else {
+      lines.push(`用神：${yongShenArr.join('、')}　喜神：${xiShenArr.join('、') || '無'}　忌神：${jiShenArr.join('、') || '無'}`);
+    }
+    if (yg.explanation) lines.push(yg.explanation);
+    if (detailed && yg.recommendations) {
+      const rec: any = yg.recommendations;
+      const summaryBits = [
+        rec.career?.favorableIndustries?.length ? `適合產業：${rec.career.favorableIndustries.slice(0, 3).join('、')}` : '',
+        rec.career?.timing ? `職涯時機：${rec.career.timing}` : '',
+        rec.lifestyle?.schedule ? `作息建議：${rec.lifestyle.schedule}` : '',
+      ].filter(Boolean);
+      if (summaryBits.length) lines.push(`用神建議摘要：${summaryBits.join('　')}`);
+    }
+    lines.push('');
+  }
+
+  // --- 十神（藏干衍生項原始資料以英文 "(hidden)" 標註，改用「（藏）」符合繁中輸出） ---
+  // 注：不顯示 strength 數字 —— TenGodsAnalyzer.calculateStrength 的位置/十神權重表
+  // 因鍵值不匹配（英文鍵查中文位置、簡體鍵查繁體十神）而全數落空，數字無資訊量。
+  const tenGods = bazi.basic?.tenGods ?? [];
+  if (tenGods.length) {
+    lines.push('=== 十神 ===');
+    const godLabel = (name: string) => name.replace(/\(hidden\)$/, '（藏）');
+    lines.push(tenGods.map((tg: any) => `${tg.position}·${godLabel(tg.name)}`).join('、'));
+    lines.push('');
+  }
+
+  // --- 神煞（名稱按位置分組；detailed 才附完整描述） ---
+  const shenShaList = bazi.basic?.shenSha ?? [];
+  lines.push('=== 神煞 ===');
+  if (shenShaList.length) {
+    const byPosition = new Map<string, string[]>();
+    for (const s of shenShaList) {
+      const arr = byPosition.get(s.position) || [];
+      arr.push(s.name);
+      byPosition.set(s.position, arr);
+    }
+    for (const [position, names] of byPosition) {
+      lines.push(`${position}：${names.join('、')}`);
+    }
+    if (detailed) {
+      for (const s of shenShaList) {
+        if (s.description) lines.push(`${s.position}·${s.name}（${s.type}）：${s.description}`);
+      }
+    }
+  } else {
+    lines.push('（無顯著神煞）');
+  }
+  lines.push('');
+
+  // --- 原局刑沖合害（8 類合沖刑害合併，各取 description） ---
+  const br: any = bazi.enhanced?.branchRelations;
+  if (br) {
+    const all = [
+      ...(br.stemCombinations ?? []),
+      ...(br.sixHarmonies ?? []),
+      ...(br.sixConflicts ?? []),
+      ...(br.sixHarms ?? []),
+      ...(br.threePunishments ?? []),
+      ...(br.threeHarmonies ?? []),
+      ...(br.sixDestructions ?? []),
+      ...(br.threeMeetings ?? []),
+    ];
+    lines.push('=== 原局刑沖合害 ===');
+    if (all.length) {
+      for (const r of all) {
+        if (r?.description) lines.push(r.description);
+      }
+    } else {
+      lines.push('（原局無明顯刑沖合害）');
+    }
+    lines.push('');
+  }
+
+  return lines;
 }
 
 export function renderZiweiText(

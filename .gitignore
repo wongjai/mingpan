@@ -35,7 +35,7 @@ test/results/
 
 .venv/
 test/*
-!test/characterization.test.ts
+!test/*.test.ts
 !test/__snapshots__/
 !test/__snapshots__/*.snap
 

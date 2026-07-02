@@ -40,6 +40,9 @@ import { DaYunCalculator } from "./services/bazi/calculators/DaYunCalculator";
 import { LuckCycleCalculator } from "./services/bazi/calculators/LuckCycleCalculator";
 import { LiuYueCalculator } from "./services/bazi/calculators/LiuYueCalculator";
 import { LiuRiCalculator } from "./services/bazi/calculators/LiuRiCalculator";
+import { TenGodsAnalyzer } from "./services/bazi/analyzers/TenGodsAnalyzer";
+import { RelationsAnalyzer, BranchRelation, StemRelation } from "./services/bazi/analyzers/RelationsAnalyzer";
+import { HIDDEN_STEMS } from "./core/constants/bazi";
 import { YearlyCalculator } from "./services/ziwei/calculators/YearlyCalculator";
 import { renderBaziText, renderZiweiText, FortuneTextOptions } from "./output/fortuneTextRenderer";
 import { mapBaziToManifestation } from "./services/bazi/ManifestationMapper";
@@ -179,6 +182,181 @@ function renderBaziTimeCorrection(result: {
   return lines.join("\n");
 }
 
+/**
+ * 渲染大運列表區塊（供 bazi_basic 於 includeDaYun=true 時附加）。
+ * 一行一個大運：起止虛歲（起止公曆年）干支·十神，現行大運附加 ←現行 標記。
+ * 僅在有大運資料時輸出；否則回傳空字串（呼叫端直接串接，不用額外判斷）。
+ */
+function renderBaziDaYunSection(result: {
+  timeBased?: {
+    daYun?: Array<{
+      index: number;
+      startAge: number;
+      endAge: number;
+      startYear: number;
+      endYear: number;
+      stem: string;
+      branch: string;
+      tenGod: string;
+    }>;
+    currentDaYun?: { index: number };
+  };
+}): string {
+  const daYunList = result.timeBased?.daYun ?? [];
+  if (!daYunList.length) return "";
+  const currentIndex = result.timeBased?.currentDaYun?.index;
+  const rows = daYunList.map((dy) => {
+    const mark = dy.index === currentIndex ? " ←現行" : "";
+    return `${dy.startAge}-${dy.endAge}歲（${dy.startYear}-${dy.endYear}）${dy.stem}${dy.branch}·${dy.tenGod}${mark}`;
+  });
+  // 前後各留單一 \n：接續於 text（已含尾段空行）之後恰好一個空行，與 renderBaziTimeCorrection 慣例一致
+  return `\n=== 大運 ===\n${rows.join("\n")}\n`;
+}
+
+// 流年柱在跨柱關係分析中的位置標籤（供 bazi_basic targetYear 用；仿 LiuYueCalculator 的 LIUYUE_POSITION 慣例）
+const LIUNIAN_POSITION = "流年";
+
+// 互動關係類型 → 繁體中文名稱。LiuYueCalculator.ts 內有同款 mapping 但未 export，
+// 此處依相同對照表仿造一份供 bazi_basic 顯示用（非重新實作偵測邏輯，純顯示標籤）。
+const LIUNIAN_RELATION_TYPE_LABELS: Record<string, string> = {
+  sixHarmony: "六合",
+  sixConflict: "六沖",
+  sixHarm: "六害",
+  threePunishment: "三刑",
+  threeHarmony: "三合",
+  sixDestruction: "六破",
+  threeMeeting: "三會",
+  fiveCombination: "天干五合",
+};
+
+// TenGodsAnalyzer 為無狀態純函式類別（calculateTenGod 只查表），模組層級單例即可，
+// 與 LiuYueCalculator constructor 內持有 this.tenGodsAnalyzer 的用法等價。
+const tenGodsAnalyzer = new TenGodsAnalyzer();
+
+interface LiuNianInteractionEntry {
+  description: string;
+  positions: string[];
+  type: string;
+  impact: "正面" | "负面" | "中性";
+  /** 實際參與的地支（干合則為天干）；三合/三會只列實見成員，供下游自行判斷半合/半會 */
+  branches: string[];
+}
+
+interface LiuNianStructured {
+  year: number;
+  ganZhi: string;
+  stem: string;
+  branch: string;
+  tenGods: { stem: string; branch: string };
+  interactions: LiuNianInteractionEntry[];
+}
+
+/**
+ * 流年十神：年干對日主、年支本氣（藏干首位）對日主。
+ * 做法與 LiuYueCalculator.calculateMonthTenGods 一致，直接複用 TenGodsAnalyzer 查表。
+ */
+function calculateLiuNianTenGods(
+  dayMaster: string,
+  stem: string,
+  branch: string
+): { stem: string; branch: string } {
+  const stemGod = tenGodsAnalyzer.calculateTenGod(dayMaster, stem);
+  const hidden = HIDDEN_STEMS[branch];
+  const mainHiddenStem = hidden && hidden.length > 0 ? hidden[0].stem : undefined;
+  const branchGod = mainHiddenStem ? tenGodsAnalyzer.calculateTenGod(dayMaster, mainHiddenStem) : "";
+  return { stem: stemGod, branch: branchGod };
+}
+
+/**
+ * 流年柱與命局四柱之刑沖合害（僅涉及流年柱者）。
+ * 做法與 LiuYueCalculator.detectAgainst 一致：逐一與各命局柱組成兩柱一組跑
+ * RelationsAnalyzer.analyzePillarSet（避免命局內部關係混入、確保配對正確），
+ * 再依 description+positions 去重。
+ */
+function detectLiuNianInteractions(
+  liuNianPillar: { stem: string; branch: string; position: string },
+  natalPillars: Array<{ stem: string; branch: string; position: string }>
+): LiuNianInteractionEntry[] {
+  const interactions: LiuNianInteractionEntry[] = [];
+  const seen = new Set<string>();
+
+  const collect = (result: ReturnType<typeof RelationsAnalyzer.analyzePillarSet>) => {
+    const branchGroups: BranchRelation[] = [
+      ...result.sixHarmonies,
+      ...result.sixConflicts,
+      ...result.sixHarms,
+      ...result.threePunishments,
+      ...result.threeHarmonies,
+      ...result.sixDestructions,
+      ...result.threeMeetings,
+    ];
+
+    for (const rel of branchGroups) {
+      if (!rel.positions.includes(LIUNIAN_POSITION)) continue;
+      const key = `${rel.description}|${[...rel.positions].sort().join(",")}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      interactions.push({
+        description: rel.description,
+        positions: rel.positions,
+        type: LIUNIAN_RELATION_TYPE_LABELS[rel.type] || rel.type,
+        impact: rel.impact,
+        branches: rel.branches,
+      });
+    }
+
+    for (const rel of result.stemCombinations as StemRelation[]) {
+      if (!rel.positions.includes(LIUNIAN_POSITION)) continue;
+      const key = `${rel.description}|${[...rel.positions].sort().join(",")}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      interactions.push({
+        description: rel.description,
+        positions: rel.positions,
+        type: LIUNIAN_RELATION_TYPE_LABELS[rel.type] || rel.type,
+        impact: rel.impact,
+        branches: rel.stems,
+      });
+    }
+  };
+
+  for (const natal of natalPillars) {
+    collect(RelationsAnalyzer.analyzePillarSet([natal, liuNianPillar]));
+  }
+
+  return interactions;
+}
+
+/**
+ * 渲染流年區塊（供 bazi_basic 於 targetYear 提供時附加）。
+ * 含流年干支、流年十神（干／支本氣對日主）、流年與原局刑沖合害。
+ * targetYear 屬顯式意圖，不受 detail 分級影響（detail=simple 亦顯示）。
+ */
+function renderBaziLiuNianSection(
+  targetYear: number,
+  liunian: { stem: string; branch: string },
+  tenGods: { stem: string; branch: string },
+  interactions: LiuNianInteractionEntry[]
+): string {
+  const lines: string[] = [
+    `=== 流年 ${targetYear} ===`,
+    `干支：${liunian.stem}${liunian.branch}`,
+    `十神：干·${tenGods.stem}　支·${tenGods.branch}`,
+  ];
+  if (interactions.length > 0) {
+    const items = interactions.map((it) => {
+      const otherPositions = it.positions.filter((p) => p !== LIUNIAN_POSITION);
+      const posLabel = otherPositions.length > 0 ? `（${otherPositions.join("、")}）` : "";
+      return `${it.description}${posLabel}`;
+    });
+    lines.push(`與原局：${items.join("、")}`);
+  } else {
+    lines.push("與原局：無明顯刑沖合害");
+  }
+  // 前置 \n\n：與原 liuNianInfo 慣例一致，於 text（已含尾段內容）後留一空行再起區塊
+  return "\n\n" + lines.join("\n");
+}
+
 const BaziCalculateSchema = z.object({
   year: z.coerce.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
   month: z.coerce.number().int().min(1).max(12).describe("Birth month (1-12)"),
@@ -192,7 +370,7 @@ const BaziCalculateSchema = z.object({
   detail: z.enum(["simple", "standard", "detailed"]).optional().default("standard").describe("Output detail level"),
   includeAnalysis: coercedBoolean().optional().default(true).describe("Include strength and pattern analysis"),
   includeDaYun: coercedBoolean().optional().default(true).describe("Include decade fortune (大運)"),
-  targetYear: z.coerce.number().int().optional().describe("Calculate LiuNian (流年) for this specific year"),
+  targetYear: z.coerce.number().int().min(1900).max(2100).optional().describe("Calculate LiuNian (流年) for this specific year"),
 });
 
 // 八字顯化指引 Schema
@@ -218,7 +396,7 @@ const ZiweiCalculateSchema = z.object({
   gender: z.enum(["male", "female"]).describe("Gender (required for ZiWei calculation)"),
   isLunar: isLunarField,
   detail: z.enum(["simple", "standard", "detailed"]).optional().default("standard").describe("Output detail level"),
-  targetYear: z.coerce.number().int().optional().describe("Calculate yearly fortune for this specific year"),
+  targetYear: z.coerce.number().int().min(1900).max(2100).optional().describe("Calculate yearly fortune for this specific year"),
   includeDecades: coercedBoolean().optional().default(true).describe("Include decade fortune (大限)"),
   includeMutagen: coercedBoolean().optional().default(true).describe("Include four mutagens (四化)"),
 });
@@ -234,7 +412,7 @@ const CombinedCalculateSchema = z.object({
   ...tstFields,
   isLunar: isLunarField,
   detail: z.enum(["simple", "standard", "detailed"]).optional().default("standard").describe("Output detail level"),
-  targetYear: z.coerce.number().int().optional().describe("Calculate yearly fortune for this specific year"),
+  targetYear: z.coerce.number().int().min(1900).max(2100).optional().describe("Calculate yearly fortune for this specific year"),
   systems: z.array(z.enum(["bazi", "ziwei"])).optional().default(["bazi", "ziwei"]).describe("Which systems to calculate"),
 });
 
@@ -439,7 +617,7 @@ const ZiweiLiuRiListSchema = BaseBirthInfoSchema.extend({
 // Create Server
 // ============================================
 
-const SERVER_VERSION = "0.1.8";
+const SERVER_VERSION = "0.1.9";
 
 /** 四捨五入至 2 位小數，消除浮點雜訊（供 structuredContent 數值欄位） */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -478,18 +656,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   const tools = [
       {
         name: "bazi_basic",
-        description: `计算八字命盘（基础排盘）。
+        description: `計算八字命盤（基礎排盤 + 分級文本分析）。
 
-输入出生时间，返回完整的八字命盘信息：
-- 四柱（年柱、月柱、日柱、时柱）干支
-- 各柱藏干
-- 十神配置
-- 五行力量分析（360分制）
-- 日主强弱判定
-- 格局识别
-- 神煞标注
+輸入出生時間，回傳四柱（年月日時）干支、藏干、日主，並依 detail 分級附加命理分析文本：
+- simple：命主資料 + 四柱（附藏干）+ 日主
+- standard（預設）：以上再加五行力量、日主強弱、格局、用神、十神、神煞、原局刑沖合害
+- detailed：standard 再加強弱評分細項、次要格局、神煞完整描述、用神建議摘要
 
-输出为结构化文本，便于 AI 分析解读。`,
+includeAnalysis=false 可關閉上述分析區塊（大運仍由 includeDaYun 獨立控制）；includeDaYun（預設 true）於分析區塊後附大運列表並標記現行運（detail=simple 時一律不顯示）；targetYear 可附加指定流年干支、流年十神及與原局刑沖合害（不受 detail 分級影響）。
+
+structuredContent 另分 calculation/analysis/metadata/warnings 各層，內容不受文本分級開關影響（恆為完整數據），calculation.hiddenStems 提供各柱藏干的結構化資料；targetYear 提供時另附 liuNian 層（流年十神、與原局刑沖合害的結構化資料）。`,
         inputSchema: schemaToJson(BaziCalculateSchema),
       },
       {
@@ -979,8 +1155,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         useLunar: false,  // Already converted to solar if needed
       });
 
-      // If targetYear is specified, calculate LiuNian
+      // If targetYear is specified, calculate LiuNian（含流年十神 + 與原局刑沖合害）
       let liuNianInfo = "";
+      let liuNianStructured: LiuNianStructured | undefined;
       if (validated.targetYear && result.chart) {
         const liuNians = LiuNianCalculator.calculate(
           result.chart,
@@ -990,7 +1167,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
         if (liuNians.length > 0) {
           const liunian = liuNians[0];
-          liuNianInfo = `\n\n=== 流年 ${validated.targetYear} ===\n干支：${liunian.stem}${liunian.branch}`;
+          const dayMaster = result.chart.day.stem;
+          const tenGods = calculateLiuNianTenGods(dayMaster, liunian.stem, liunian.branch);
+
+          const natalPillars = [
+            { stem: result.chart.year.stem, branch: result.chart.year.branch, position: '年柱' },
+            { stem: result.chart.month.stem, branch: result.chart.month.branch, position: '月柱' },
+            { stem: result.chart.day.stem, branch: result.chart.day.branch, position: '日柱' },
+            { stem: result.chart.hour.stem, branch: result.chart.hour.branch, position: '時柱' },
+          ];
+          const interactions = detectLiuNianInteractions(
+            { stem: liunian.stem, branch: liunian.branch, position: LIUNIAN_POSITION },
+            natalPillars
+          );
+
+          liuNianInfo = renderBaziLiuNianSection(validated.targetYear, liunian, tenGods, interactions);
+          liuNianStructured = {
+            year: validated.targetYear,
+            ganZhi: `${liunian.stem}${liunian.branch}`,
+            stem: liunian.stem,
+            branch: liunian.branch,
+            tenGods,
+            interactions,
+          };
         }
       }
 
@@ -998,6 +1197,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         detail: validated.detail,
         includePersonal: false,
         includeLocation: !!validated.longitude,
+        includeAnalysis: validated.includeAnalysis,
       };
 
       const birthDate = new Date(normalized.year, normalized.month - 1, normalized.day, normalized.hour, normalized.minute);
@@ -1005,6 +1205,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         { bazi: result, gender: normalized.gender, birthDate },
         options
       );
+
+      // detail=simple 一律唔顯示大運（simple = 純命盤）；否則由 includeDaYun 決定
+      const daYunSection =
+        validated.includeDaYun && validated.detail !== "simple"
+          ? renderBaziDaYunSection(result)
+          : "";
 
       const sti = result.birthInfo?.solarTimeInfo;
       const p = (pi: any) => (pi ? `${pi.stem}${pi.branch}` : "");
@@ -1086,6 +1292,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         destructions: br?.sixDestructions ?? [],
       };
 
+      // 各柱藏干（additive sibling key，唔改動現有 pillars 形狀）
+      const hiddenStemsOf = (pi: any) =>
+        (pi?.hiddenStems ?? []).map((hs: any) => ({ stem: hs.stem, isMain: hs.isMain }));
+
       const structured = {
         calculation: {
           pillars: {
@@ -1093,6 +1303,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             month: p(result.chart?.month),
             day: p(result.chart?.day),
             hour: p(result.chart?.hour),
+          },
+          hiddenStems: {
+            year: hiddenStemsOf(result.chart?.year),
+            month: hiddenStemsOf(result.chart?.month),
+            day: hiddenStemsOf(result.chart?.day),
+            hour: hiddenStemsOf(result.chart?.hour),
           },
           dayMaster: result.basic?.dayMaster,
           dayMasterElement: result.basic?.dayMasterElement,
@@ -1115,13 +1331,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           version: SERVER_VERSION,
         },
         warnings,
+        // 僅在 targetYear 提供時附加（additive，不影響上述既有三層形狀）
+        ...(liuNianStructured ? { liuNian: liuNianStructured } : {}),
       };
 
       return {
         content: [
           {
             type: "text",
-            text: text + liuNianInfo + renderBaziTimeCorrection(result),
+            text: text + daYunSection + liuNianInfo + renderBaziTimeCorrection(result),
           },
         ],
         structuredContent: structured,

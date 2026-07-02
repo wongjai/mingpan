@@ -678,7 +678,10 @@ export class RelationsAnalyzer {
           impact: '正面',
           strength: this.applyPositionModifier(baseStrength, positionType),
           element: group.element,
-          description: group.description,
+          // 只集齊 2/3 屬半合：必須明示，否則下游會當完整三合局解讀（過度宣稱）
+          description: distinct.length === 3
+            ? group.description
+            : `${group.description.replace('三合', '半合')}（僅見${distinct.join('、')}）`,
           positionType,
           spacing: minSpacing
         });
@@ -793,7 +796,10 @@ export class RelationsAnalyzer {
           impact: '正面',
           strength: this.applyPositionModifier(baseStrength, positionType),
           element: group.element,
-          description: group.description,
+          // 只集齊 2/3 屬半會：必須明示，否則下游會當完整三會局解讀（過度宣稱）
+          description: distinct.length === 3
+            ? group.description
+            : `${group.description.replace('三會', '半會')}（僅見${distinct.join('、')}）`,
           positionType,
           spacing: minSpacing
         });
