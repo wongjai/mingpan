@@ -23,6 +23,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { Lunar, Solar } from "lunar-javascript";
 
 import { BEIJING_TZ, normalizeBirthDateTime } from "./utils/timeNormalization";
+import { coercedBoolean } from "./utils/coerce";
 import { TrueSolarTime } from "./core/bazi/TrueSolarTime";
 import { BaziService } from "./services/bazi/BaziService";
 import { ZiweiService } from "./services/ziwei/ZiweiService";
@@ -83,16 +84,16 @@ function schemaToJson(schema: any): Record<string, unknown> {
 // ============================================
 
 // isLunar field schema (reusable)
-const isLunarField = z.boolean().optional().default(false).describe(
+const isLunarField = coercedBoolean().optional().default(false).describe(
   "Whether the input date is in lunar calendar (農曆). If true, will be converted to solar calendar internally."
 );
 
 // 真太陽時 / 時區進階參數（八字系列共用；全部可選，缺省 = 北京時間 UTC+8）
 const tstFields = {
-  timezone: z.number().min(-14).max(14).optional().describe(
+  timezone: z.coerce.number().min(-14).max(14).optional().describe(
     "出生鐘錶所屬標準時區的 UTC 偏移（小時），如中國為 8、美東標準時為 -5。預設 8（北京時間）"
   ),
-  dstOffset: z.number().min(-2).max(2).optional().describe(
+  dstOffset: z.coerce.number().min(-2).max(2).optional().describe(
     "夏令時偏移（小時），夏令時撥快一小時填 1。中國 1986–1991 夏令時會自動偵測，無需手填"
   ),
   timezoneId: z.string().optional().describe(
@@ -105,13 +106,13 @@ const tstFields = {
 
 // Base birth info schema
 const BaseBirthInfoSchema = z.object({
-  year: z.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
-  month: z.number().int().min(1).max(12).describe("Birth month (1-12)"),
-  day: z.number().int().min(1).max(31).describe("Birth day (1-31)"),
-  hour: z.number().int().min(0).max(23).describe("Birth hour in 24-hour format (0-23)"),
-  minute: z.number().int().min(0).max(59).optional().default(0).describe("Birth minute (0-59)"),
+  year: z.coerce.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
+  month: z.coerce.number().int().min(1).max(12).describe("Birth month (1-12)"),
+  day: z.coerce.number().int().min(1).max(31).describe("Birth day (1-31)"),
+  hour: z.coerce.number().int().min(0).max(23).describe("Birth hour in 24-hour format (0-23)"),
+  minute: z.coerce.number().int().min(0).max(59).optional().default(0).describe("Birth minute (0-59)"),
   gender: z.enum(["male", "female"]).describe("Gender for fortune direction calculation"),
-  longitude: z.number().min(-180).max(180).optional().describe("Birth location longitude for true solar time adjustment"),
+  longitude: z.coerce.number().min(-180).max(180).optional().describe("Birth location longitude for true solar time adjustment"),
   ...tstFields,
   isLunar: isLunarField,
   name: z.string().optional().describe("Subject name (optional)"),
@@ -179,61 +180,61 @@ function renderBaziTimeCorrection(result: {
 }
 
 const BaziCalculateSchema = z.object({
-  year: z.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
-  month: z.number().int().min(1).max(12).describe("Birth month (1-12)"),
-  day: z.number().int().min(1).max(31).describe("Birth day (1-31)"),
-  hour: z.number().int().min(0).max(23).describe("Birth hour in 24-hour format (0-23)"),
-  minute: z.number().int().min(0).max(59).optional().default(0).describe("Birth minute (0-59)"),
+  year: z.coerce.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
+  month: z.coerce.number().int().min(1).max(12).describe("Birth month (1-12)"),
+  day: z.coerce.number().int().min(1).max(31).describe("Birth day (1-31)"),
+  hour: z.coerce.number().int().min(0).max(23).describe("Birth hour in 24-hour format (0-23)"),
+  minute: z.coerce.number().int().min(0).max(59).optional().default(0).describe("Birth minute (0-59)"),
   gender: z.enum(["male", "female"]).optional().default("male").describe("Gender for DaYun calculation direction"),
-  longitude: z.number().min(-180).max(180).optional().describe("Birth location longitude for true solar time adjustment"),
+  longitude: z.coerce.number().min(-180).max(180).optional().describe("Birth location longitude for true solar time adjustment"),
   ...tstFields,
   isLunar: isLunarField,
   detail: z.enum(["simple", "standard", "detailed"]).optional().default("standard").describe("Output detail level"),
-  includeAnalysis: z.boolean().optional().default(true).describe("Include strength and pattern analysis"),
-  includeDaYun: z.boolean().optional().default(true).describe("Include decade fortune (大運)"),
-  targetYear: z.number().int().optional().describe("Calculate LiuNian (流年) for this specific year"),
+  includeAnalysis: coercedBoolean().optional().default(true).describe("Include strength and pattern analysis"),
+  includeDaYun: coercedBoolean().optional().default(true).describe("Include decade fortune (大運)"),
+  targetYear: z.coerce.number().int().optional().describe("Calculate LiuNian (流年) for this specific year"),
 });
 
 // 八字顯化指引 Schema
 const BaziManifestationSchema = z.object({
-  year: z.number().int().min(1900).max(2100).describe("出生年份（公曆，1900-2100）"),
-  month: z.number().int().min(1).max(12).describe("出生月份（1-12）"),
-  day: z.number().int().min(1).max(31).describe("出生日期（1-31）"),
-  hour: z.number().int().min(0).max(23).describe("出生時辰（0-23，24小時制）"),
-  minute: z.number().int().min(0).max(59).optional().default(0).describe("出生分鐘（0-59）"),
+  year: z.coerce.number().int().min(1900).max(2100).describe("出生年份（公曆，1900-2100）"),
+  month: z.coerce.number().int().min(1).max(12).describe("出生月份（1-12）"),
+  day: z.coerce.number().int().min(1).max(31).describe("出生日期（1-31）"),
+  hour: z.coerce.number().int().min(0).max(23).describe("出生時辰（0-23，24小時制）"),
+  minute: z.coerce.number().int().min(0).max(59).optional().default(0).describe("出生分鐘（0-59）"),
   gender: z.enum(["male", "female"]).optional().default("male").describe("性別（影響大運方向）"),
-  longitude: z.number().min(-180).max(180).optional().describe("出生地經度（用於真太陽時校正，可選）"),
+  longitude: z.coerce.number().min(-180).max(180).optional().describe("出生地經度（用於真太陽時校正，可選）"),
   ...tstFields,
   isLunar: isLunarField,
-  targetYear: z.number().int().min(1900).max(2100).optional().describe("指定分析的流年年份（可選，預設為當前年份）"),
+  targetYear: z.coerce.number().int().min(1900).max(2100).optional().describe("指定分析的流年年份（可選，預設為當前年份）"),
 });
 
 const ZiweiCalculateSchema = z.object({
-  year: z.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
-  month: z.number().int().min(1).max(12).describe("Birth month (1-12)"),
-  day: z.number().int().min(1).max(31).describe("Birth day (1-31)"),
-  hour: z.number().int().min(0).max(23).describe("Birth hour in 24-hour format (0-23)"),
-  minute: z.number().int().min(0).max(59).optional().default(0).describe("Birth minute (0-59)"),
+  year: z.coerce.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
+  month: z.coerce.number().int().min(1).max(12).describe("Birth month (1-12)"),
+  day: z.coerce.number().int().min(1).max(31).describe("Birth day (1-31)"),
+  hour: z.coerce.number().int().min(0).max(23).describe("Birth hour in 24-hour format (0-23)"),
+  minute: z.coerce.number().int().min(0).max(59).optional().default(0).describe("Birth minute (0-59)"),
   gender: z.enum(["male", "female"]).describe("Gender (required for ZiWei calculation)"),
   isLunar: isLunarField,
   detail: z.enum(["simple", "standard", "detailed"]).optional().default("standard").describe("Output detail level"),
-  targetYear: z.number().int().optional().describe("Calculate yearly fortune for this specific year"),
-  includeDecades: z.boolean().optional().default(true).describe("Include decade fortune (大限)"),
-  includeMutagen: z.boolean().optional().default(true).describe("Include four mutagens (四化)"),
+  targetYear: z.coerce.number().int().optional().describe("Calculate yearly fortune for this specific year"),
+  includeDecades: coercedBoolean().optional().default(true).describe("Include decade fortune (大限)"),
+  includeMutagen: coercedBoolean().optional().default(true).describe("Include four mutagens (四化)"),
 });
 
 const CombinedCalculateSchema = z.object({
-  year: z.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
-  month: z.number().int().min(1).max(12).describe("Birth month (1-12)"),
-  day: z.number().int().min(1).max(31).describe("Birth day (1-31)"),
-  hour: z.number().int().min(0).max(23).describe("Birth hour in 24-hour format (0-23)"),
-  minute: z.number().int().min(0).max(59).optional().default(0).describe("Birth minute (0-59)"),
+  year: z.coerce.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
+  month: z.coerce.number().int().min(1).max(12).describe("Birth month (1-12)"),
+  day: z.coerce.number().int().min(1).max(31).describe("Birth day (1-31)"),
+  hour: z.coerce.number().int().min(0).max(23).describe("Birth hour in 24-hour format (0-23)"),
+  minute: z.coerce.number().int().min(0).max(59).optional().default(0).describe("Birth minute (0-59)"),
   gender: z.enum(["male", "female"]).describe("Gender (required for both calculations)"),
-  longitude: z.number().min(-180).max(180).optional().describe("Birth location longitude for true solar time adjustment"),
+  longitude: z.coerce.number().min(-180).max(180).optional().describe("Birth location longitude for true solar time adjustment"),
   ...tstFields,
   isLunar: isLunarField,
   detail: z.enum(["simple", "standard", "detailed"]).optional().default("standard").describe("Output detail level"),
-  targetYear: z.number().int().optional().describe("Calculate yearly fortune for this specific year"),
+  targetYear: z.coerce.number().int().optional().describe("Calculate yearly fortune for this specific year"),
   systems: z.array(z.enum(["bazi", "ziwei"])).optional().default(["bazi", "ziwei"]).describe("Which systems to calculate"),
 });
 
@@ -242,14 +243,14 @@ const CombinedCalculateSchema = z.object({
 // ============================================
 
 const TrueSolarTimeSchema = z.object({
-  year: z.number().int().min(1900).max(2100).describe("年份（公曆，1900-2100）"),
-  month: z.number().int().min(1).max(12).describe("月份（1-12）"),
-  day: z.number().int().min(1).max(31).describe("日期（1-31）"),
-  hour: z.number().int().min(0).max(23).describe("時（0-23，24小時制）"),
-  minute: z.number().int().min(0).max(59).optional().default(0).describe("分（0-59）"),
-  longitude: z.number().min(-180).max(180).describe("出生地經度（必填，東經為正、西經為負）"),
-  timezone: z.number().min(-14).max(14).optional().describe("標準時區 UTC 偏移（小時），預設 8（北京）"),
-  dstOffset: z.number().min(-2).max(2).optional().describe("夏令時偏移（小時）。中國 1986–1991 會自動偵測"),
+  year: z.coerce.number().int().min(1900).max(2100).describe("年份（公曆，1900-2100）"),
+  month: z.coerce.number().int().min(1).max(12).describe("月份（1-12）"),
+  day: z.coerce.number().int().min(1).max(31).describe("日期（1-31）"),
+  hour: z.coerce.number().int().min(0).max(23).describe("時（0-23，24小時制）"),
+  minute: z.coerce.number().int().min(0).max(59).optional().default(0).describe("分（0-59）"),
+  longitude: z.coerce.number().min(-180).max(180).describe("出生地經度（必填，東經為正、西經為負）"),
+  timezone: z.coerce.number().min(-14).max(14).optional().describe("標準時區 UTC 偏移（小時），預設 8（北京）"),
+  dstOffset: z.coerce.number().min(-2).max(2).optional().describe("夏令時偏移（小時）。中國 1986–1991 會自動偵測"),
   timezoneId: z.string().optional().describe("IANA 時區標識（如 'Asia/Shanghai'、'America/New_York'）"),
 });
 
@@ -259,10 +260,10 @@ const TrueSolarTimeSchema = z.object({
 
 const ReverseBaziSchema = z.object({
   bazi: z.string().describe("四柱干支，以空格分隔，例如：戊寅 己未 己卯 辛未"),
-  startYear: z.number().int().min(1900).max(2100).optional().default(1940).describe("反查起始年（公曆），預設 1940"),
-  endYear: z.number().int().min(1900).max(2100).optional().describe("反查結束年（公曆），預設當前年"),
+  startYear: z.coerce.number().int().min(1900).max(2100).optional().default(1940).describe("反查起始年（公曆），預設 1940"),
+  endYear: z.coerce.number().int().min(1900).max(2100).optional().describe("反查結束年（公曆），預設當前年"),
   dayBoundaryMode: z.enum(["MIDNIGHT_00", "ZI_HOUR_23"]).optional().default("MIDNIGHT_00").describe("子時換日流派，需與目標八字一致"),
-  limit: z.number().int().min(1).max(100).optional().default(20).describe("最多返回幾個候選時間，預設 20"),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(20).describe("最多返回幾個候選時間，預設 20"),
 });
 
 // ============================================
@@ -275,10 +276,10 @@ const LiuyaoBasicSchema = z.object({
   yaoValues: z.array(
     z.union([z.literal(6), z.literal(7), z.literal(8), z.literal(9)])
   ).length(6).describe("六個爻值（自下而上，初爻到上爻）。6=老陰(動), 7=少陽(靜), 8=少陰(靜), 9=老陽(動)"),
-  year: z.number().int().min(1900).max(2100).describe("起卦年份（公曆）"),
-  month: z.number().int().min(1).max(12).describe("起卦月份（1-12）"),
-  day: z.number().int().min(1).max(31).describe("起卦日期（1-31）"),
-  hour: z.number().int().min(0).max(23).describe("起卦時辰（0-23）"),
+  year: z.coerce.number().int().min(1900).max(2100).describe("起卦年份（公曆）"),
+  month: z.coerce.number().int().min(1).max(12).describe("起卦月份（1-12）"),
+  day: z.coerce.number().int().min(1).max(31).describe("起卦日期（1-31）"),
+  hour: z.coerce.number().int().min(0).max(23).describe("起卦時辰（0-23）"),
   isLunar: isLunarField,
 });
 
@@ -289,15 +290,15 @@ const LiuyaoBasicSchema = z.object({
 const MeihuaBasicSchema = z.object({
   method: z.enum(['time', 'number']).describe("起卦方式：time=時間起卦，number=數字起卦"),
   // time 模式參數
-  year: z.number().int().min(1900).max(2100).optional().describe("起卦年份（公曆，time 模式必填）"),
-  month: z.number().int().min(1).max(12).optional().describe("起卦月份（1-12，time 模式必填）"),
-  day: z.number().int().min(1).max(31).optional().describe("起卦日期（1-31，time 模式必填）"),
-  hour: z.number().int().min(0).max(23).optional().describe("起卦時辰（0-23，time 模式必填）"),
+  year: z.coerce.number().int().min(1900).max(2100).optional().describe("起卦年份（公曆，time 模式必填）"),
+  month: z.coerce.number().int().min(1).max(12).optional().describe("起卦月份（1-12，time 模式必填）"),
+  day: z.coerce.number().int().min(1).max(31).optional().describe("起卦日期（1-31，time 模式必填）"),
+  hour: z.coerce.number().int().min(0).max(23).optional().describe("起卦時辰（0-23，time 模式必填）"),
   isLunar: isLunarField,
   // number 模式參數
-  upperNumber: z.number().int().min(1).optional().describe("上卦數（number 模式必填）"),
-  lowerNumber: z.number().int().min(1).optional().describe("下卦數（number 模式必填）"),
-  yaoNumber: z.number().int().min(1).optional().describe("動爻數（可選，默認用上下卦數之和）"),
+  upperNumber: z.coerce.number().int().min(1).optional().describe("上卦數（number 模式必填）"),
+  lowerNumber: z.coerce.number().int().min(1).optional().describe("下卦數（number 模式必填）"),
+  yaoNumber: z.coerce.number().int().min(1).optional().describe("動爻數（可選，默認用上下卦數之和）"),
 });
 
 // ============================================
@@ -306,7 +307,7 @@ const MeihuaBasicSchema = z.object({
 
 const DaliurenBasicSchema = z.object({
   jieqi: z.string().describe("節氣（如：立春、雨水、驚蟄等）"),
-  lunarMonth: z.number().int().min(1).max(12).describe("農曆月份（1-12）"),
+  lunarMonth: z.coerce.number().int().min(1).max(12).describe("農曆月份（1-12）"),
   dayGanZhi: z.string().describe("日干支（如：甲子、乙丑等）"),
   hourGanZhi: z.string().describe("時干支（如：甲子、乙丑等）"),
   guirenMethod: z.union([z.literal(0), z.literal(1)]).optional().default(0).describe("貴人起法：0=標準, 1=另一種"),
@@ -317,11 +318,11 @@ const DaliurenBasicSchema = z.object({
 // ============================================
 
 const QimenBasicSchema = z.object({
-  year: z.number().int().min(1900).max(2100).describe("年份（公曆，1900-2100）"),
-  month: z.number().int().min(1).max(12).describe("月份（1-12）"),
-  day: z.number().int().min(1).max(31).describe("日期（1-31）"),
-  hour: z.number().int().min(0).max(23).describe("時辰（0-23，24小時制）"),
-  minute: z.number().int().min(0).max(59).optional().default(0).describe("分鐘（0-59）"),
+  year: z.coerce.number().int().min(1900).max(2100).describe("年份（公曆，1900-2100）"),
+  month: z.coerce.number().int().min(1).max(12).describe("月份（1-12）"),
+  day: z.coerce.number().int().min(1).max(31).describe("日期（1-31）"),
+  hour: z.coerce.number().int().min(0).max(23).describe("時辰（0-23，24小時制）"),
+  minute: z.coerce.number().int().min(0).max(59).optional().default(0).describe("分鐘（0-59）"),
   isLunar: isLunarField,
   panType: z.enum(['时盘', '日盘', '月盘', '年盘']).optional().default('时盘').describe("盤類型：时盘（默認）、日盘、月盘、年盘"),
   panStyle: z.enum(['转盘', '飞盘']).optional().default('转盘').describe("盤式：转盘（默認，遵循《神奇之門》）或飞盘"),
@@ -330,11 +331,11 @@ const QimenBasicSchema = z.object({
 
 // 奇门用神分析
 const QimenYongShenSchema = z.object({
-  year: z.number().int().min(1900).max(2100).describe("年份（公曆，1900-2100）"),
-  month: z.number().int().min(1).max(12).describe("月份（1-12）"),
-  day: z.number().int().min(1).max(31).describe("日期（1-31）"),
-  hour: z.number().int().min(0).max(23).describe("時辰（0-23，24小時制）"),
-  minute: z.number().int().min(0).max(59).optional().default(0).describe("分鐘（0-59）"),
+  year: z.coerce.number().int().min(1900).max(2100).describe("年份（公曆，1900-2100）"),
+  month: z.coerce.number().int().min(1).max(12).describe("月份（1-12）"),
+  day: z.coerce.number().int().min(1).max(31).describe("日期（1-31）"),
+  hour: z.coerce.number().int().min(0).max(23).describe("時辰（0-23，24小時制）"),
+  minute: z.coerce.number().int().min(0).max(59).optional().default(0).describe("分鐘（0-59）"),
   isLunar: isLunarField,
   panType: z.enum(['时盘', '日盘', '月盘', '年盘']).optional().default('时盘').describe("盤類型：时盘（默認）、日盘、月盘、年盘"),
   panStyle: z.enum(['转盘', '飞盘']).optional().default('转盘').describe("盤式：转盘（默認）或飞盘"),
@@ -344,27 +345,27 @@ const QimenYongShenSchema = z.object({
     '失物', '置业', '求官', '孕产', '寻人', '合作', '其他'
   ]).describe("事類（用於確定用神）"),
   nianGan: z.enum(['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸']).optional().describe("年干（用於年命分析，可選）"),
-  includeShenSha: z.boolean().optional().default(true).describe("是否包含神煞分析"),
+  includeShenSha: coercedBoolean().optional().default(true).describe("是否包含神煞分析"),
 });
 
 // 奇门择日
 const QimenZeRiSchema = z.object({
-  startYear: z.number().int().min(1900).max(2100).describe("起始年份"),
-  startMonth: z.number().int().min(1).max(12).describe("起始月份"),
-  startDay: z.number().int().min(1).max(31).describe("起始日期"),
-  endYear: z.number().int().min(1900).max(2100).describe("結束年份"),
-  endMonth: z.number().int().min(1).max(12).describe("結束月份"),
-  endDay: z.number().int().min(1).max(31).describe("結束日期"),
+  startYear: z.coerce.number().int().min(1900).max(2100).describe("起始年份"),
+  startMonth: z.coerce.number().int().min(1).max(12).describe("起始月份"),
+  startDay: z.coerce.number().int().min(1).max(31).describe("起始日期"),
+  endYear: z.coerce.number().int().min(1900).max(2100).describe("結束年份"),
+  endMonth: z.coerce.number().int().min(1).max(12).describe("結束月份"),
+  endDay: z.coerce.number().int().min(1).max(31).describe("結束日期"),
   shiLei: z.enum([
     '求财', '婚姻', '疾病', '出行', '诉讼', '考试', '工作',
     '失物', '置业', '求官', '孕产', '寻人', '合作', '其他'
   ]).describe("事類"),
-  limit: z.number().int().min(1).max(50).optional().default(10).describe("返回數量限制（默認10）"),
-  minScore: z.number().int().min(0).max(100).optional().default(60).describe("最小評分閾值（0-100，默認60）"),
-  includeDirection: z.boolean().optional().default(false).describe("是否輸出方位信息"),
-  excludeJieQiDay: z.boolean().optional().default(false).describe("是否排除節氣交接日"),
-  excludeSuiPo: z.boolean().optional().default(false).describe("是否排除歲破日"),
-  excludeYuePo: z.boolean().optional().default(false).describe("是否排除月破日"),
+  limit: z.coerce.number().int().min(1).max(50).optional().default(10).describe("返回數量限制（默認10）"),
+  minScore: z.coerce.number().int().min(0).max(100).optional().default(60).describe("最小評分閾值（0-100，默認60）"),
+  includeDirection: coercedBoolean().optional().default(false).describe("是否輸出方位信息"),
+  excludeJieQiDay: coercedBoolean().optional().default(false).describe("是否排除節氣交接日"),
+  excludeSuiPo: coercedBoolean().optional().default(false).describe("是否排除歲破日"),
+  excludeYuePo: coercedBoolean().optional().default(false).describe("是否排除月破日"),
   panType: z.enum(['时盘', '日盘', '月盘', '年盘']).optional().default('时盘').describe("盤類型"),
   panStyle: z.enum(['转盘', '飞盘']).optional().default('转盘').describe("盤式"),
   zhiRunMethod: z.enum(['chaibu', 'maoshan']).optional().default('chaibu').describe("置閏方法"),
@@ -376,20 +377,20 @@ const QimenZeRiSchema = z.object({
 
 // 八字大运列表
 const BaziDaYunListSchema = BaseBirthInfoSchema.extend({
-  count: z.number().int().min(1).max(12).optional().default(10).describe("Number of DaYun periods to display (default 10)"),
+  count: z.coerce.number().int().min(1).max(12).optional().default(10).describe("Number of DaYun periods to display (default 10)"),
 });
 
 // 八字流年列表
 const BaziLiuNianListSchema = BaseBirthInfoSchema.extend({
-  startYear: z.number().int().min(1900).max(2100).describe("Start year for the range"),
-  endYear: z.number().int().min(1900).max(2100).describe("End year for the range"),
+  startYear: z.coerce.number().int().min(1900).max(2100).describe("Start year for the range"),
+  endYear: z.coerce.number().int().min(1900).max(2100).describe("End year for the range"),
 });
 
 // 八字流月列表（干支月/节气月）
 const BaziLiuYueListSchema = BaseBirthInfoSchema.extend({
   ganzhiYear: z.union([
     z.string().describe("GanZhi year like '乙巳'"),
-    z.number().int().min(1900).max(2100).describe("Gregorian year like 2025")
+    z.coerce.number().int().min(1900).max(2100).describe("Gregorian year like 2025")
   ]).describe("The year to query (either GanZhi string or Gregorian year)"),
 });
 
@@ -397,47 +398,47 @@ const BaziLiuYueListSchema = BaseBirthInfoSchema.extend({
 const BaziLiuRiListSchema = BaseBirthInfoSchema.extend({
   ganzhiYear: z.union([
     z.string().describe("GanZhi year like '乙巳'"),
-    z.number().int().min(1900).max(2100).describe("Gregorian year like 2025")
+    z.coerce.number().int().min(1900).max(2100).describe("Gregorian year like 2025")
   ]).describe("The year of the month"),
   ganzhiMonth: z.union([
     z.string().describe("GanZhi month like '丙寅' (month 1 = 寅月)"),
-    z.number().int().min(1).max(12).describe("Month number (1=寅月, 2=卯月, ..., 12=丑月)")
+    z.coerce.number().int().min(1).max(12).describe("Month number (1=寅月, 2=卯月, ..., 12=丑月)")
   ]).describe("The month to query (either GanZhi string or month number 1-12)"),
 });
 
 // 紫微大限列表
 const ZiweiDaXianListSchema = BaseBirthInfoSchema.extend({
-  count: z.number().int().min(1).max(12).optional().default(10).describe("Number of decade periods to display (default 10)"),
+  count: z.coerce.number().int().min(1).max(12).optional().default(10).describe("Number of decade periods to display (default 10)"),
 });
 
 // 紫微小限列表
 const ZiweiXiaoXianListSchema = BaseBirthInfoSchema.extend({
-  startAge: z.number().int().min(1).max(120).describe("Start age (nominal age) for the range"),
-  endAge: z.number().int().min(1).max(120).describe("End age (nominal age) for the range"),
+  startAge: z.coerce.number().int().min(1).max(120).describe("Start age (nominal age) for the range"),
+  endAge: z.coerce.number().int().min(1).max(120).describe("End age (nominal age) for the range"),
 });
 
 // 紫微流年列表
 const ZiweiLiuNianListSchema = BaseBirthInfoSchema.extend({
-  startYear: z.number().int().min(1900).max(2100).describe("Start year for the range"),
-  endYear: z.number().int().min(1900).max(2100).describe("End year for the range"),
+  startYear: z.coerce.number().int().min(1900).max(2100).describe("Start year for the range"),
+  endYear: z.coerce.number().int().min(1900).max(2100).describe("End year for the range"),
 });
 
 // 紫微流月列表（农历月）
 const ZiweiLiuYueListSchema = BaseBirthInfoSchema.extend({
-  lunarYear: z.number().int().min(1900).max(2100).describe("The lunar year (Gregorian year) to query"),
+  lunarYear: z.coerce.number().int().min(1900).max(2100).describe("The lunar year (Gregorian year) to query"),
 });
 
 // 紫微流日列表（农历日）
 const ZiweiLiuRiListSchema = BaseBirthInfoSchema.extend({
-  lunarYear: z.number().int().min(1900).max(2100).describe("The lunar year (Gregorian year)"),
-  lunarMonth: z.number().int().min(-12).max(12).describe("Lunar month (1-12, use negative for leap month, e.g. -6 for leap 6th month)"),
+  lunarYear: z.coerce.number().int().min(1900).max(2100).describe("The lunar year (Gregorian year)"),
+  lunarMonth: z.coerce.number().int().min(-12).max(12).describe("Lunar month (1-12, use negative for leap month, e.g. -6 for leap 6th month)"),
 });
 
 // ============================================
 // Create Server
 // ============================================
 
-const SERVER_VERSION = "0.1.6";
+const SERVER_VERSION = "0.1.7";
 
 /** 四捨五入至 2 位小數，消除浮點雜訊（供 structuredContent 數值欄位） */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -870,6 +871,10 @@ function getYearStemBranch(year: number): { stem: string; branch: string } {
 
 // Helper: Parse GanZhi year input
 function parseGanzhiYear(input: string | number): { year: number; ganzhi: string } {
+  // Clients may serialize a numeric year as a string (e.g. "2026") — treat it as a year.
+  if (typeof input === 'string' && /^\d{3,4}$/.test(input.trim())) {
+    input = Number(input.trim());
+  }
   if (typeof input === 'number') {
     const { stem, branch } = getYearStemBranch(input);
     return { year: input, ganzhi: stem + branch };
@@ -889,6 +894,10 @@ function parseGanzhiYear(input: string | number): { year: number; ganzhi: string
 
 // Helper: Parse GanZhi month input
 function parseGanzhiMonth(input: string | number): number {
+  // Clients may serialize a numeric month as a string (e.g. "8") — treat it as a month number.
+  if (typeof input === 'string' && /^\d{1,2}$/.test(input.trim())) {
+    input = Number(input.trim());
+  }
   if (typeof input === 'number') {
     return input; // 1-12
   }
