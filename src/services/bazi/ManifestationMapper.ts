@@ -189,10 +189,12 @@ export function mapBaziToManifestation(
   const strength =
     result.traditional?.strength ||
     result.enhanced?.strengthAnalysis?.dayMasterStrength;
-  // 格局：只接受含中文的書面值，過濾內部英文 key（如 specialized_strong）
+  // 格局：優先取 enhanced.patternAnalysis（權威書面格局名），
+  // 缺失時退回 traditional.geJu.description（中文敘述）；
+  // 絕不輸出 geJu.pattern（內部英文 key，如 follow_金）
   const rawPattern =
-    result.traditional?.geJu?.pattern ||
-    result.enhanced?.patternAnalysis?.primaryPattern?.type;
+    result.enhanced?.patternAnalysis?.primaryPattern?.type ||
+    result.traditional?.geJu?.description;
   const pattern =
     rawPattern && /[一-鿿]/.test(rawPattern) ? rawPattern : undefined;
 

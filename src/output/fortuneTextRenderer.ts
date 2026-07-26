@@ -8,6 +8,10 @@ export type FortuneTextOptions = {
   includePersonal?: boolean;
   includeLocation?: boolean;
   includeAnalysis?: boolean;
+  /** 紫微專用：是否於十二宮位標註大限年齡區間（預設 true） */
+  includeDecades?: boolean;
+  /** 紫微專用：是否輸出四化系統區塊（預設 true） */
+  includeMutagen?: boolean;
 };
 
 export type BaziTimeLabels = {
@@ -498,14 +502,16 @@ export function renderZiweiText(
         const dailyName = relNameByIndex(idx, dailyMingIndex) ? `目標流日為${relNameByIndex(idx, dailyMingIndex)}` : '';
 
         // 大限年齡區間（虛歲）
-        // 大限年齡：若缺失，根據decades補全
+        // 大限年齡：若缺失，根據decades補全；includeDecades=false 時整段略去
         let age = '';
-        if (p.decadeInfo && p.decadeInfo.startAge && p.decadeInfo.endAge) {
-          age = `（${p.decadeInfo.startAge}-${p.decadeInfo.endAge}歲）`;
-        } else if ((ziwei as any).decades?.length) {
-          const dec = (ziwei as any).decades.find((d: any) => d.palaceIndex === (p.index ?? 0));
-          if (dec?.startAge && dec?.endAge) {
-            age = `（${dec.startAge}-${dec.endAge}歲）`;
+        if (options.includeDecades !== false) {
+          if (p.decadeInfo && p.decadeInfo.startAge && p.decadeInfo.endAge) {
+            age = `（${p.decadeInfo.startAge}-${p.decadeInfo.endAge}歲）`;
+          } else if ((ziwei as any).decades?.length) {
+            const dec = (ziwei as any).decades.find((d: any) => d.palaceIndex === (p.index ?? 0));
+            if (dec?.startAge && dec?.endAge) {
+              age = `（${dec.startAge}-${dec.endAge}歲）`;
+            }
           }
         }
         const bodyMark = p.isBodyPalace ? ' [身]' : '';
@@ -525,9 +531,12 @@ export function renderZiweiText(
     // 四化
     // 只有在明確指定對應時間範圍時才顯示對應的四化
     // 本命四化始終顯示；大限/流年/流月/流日四化僅在有對應 timeContext 時顯示
+    // includeMutagen=false 時整個四化區塊略去
     try {
       // 優先使用外部覆蓋的mutagen（包含月/日/時），否則使用ziwei內置
-      const m = (mutagen as any) || ((ziwei as any).mutagenInfo as any);
+      const m = options.includeMutagen === false
+        ? undefined
+        : ((mutagen as any) || ((ziwei as any).mutagenInfo as any));
       if (m) {
         const fmtLine = (label: string, info?: any) => {
           if (!info) return '';

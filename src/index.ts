@@ -32,6 +32,7 @@ import { renderLiuyaoText } from "./output/liuyaoTextRenderer";
 import { MeihuaService } from "./services/meihua/MeihuaService";
 import { renderMeihuaText } from "./output/meihuaTextRenderer";
 import { DaliurenService } from "./services/daliuren/DaliurenService";
+import { JIA_ZI_60 } from "./services/daliuren/data/constants";
 import { renderDaliurenText } from "./output/daliurenTextRenderer";
 import { QimenService } from "./services/qimen/QimenService";
 import { renderQimenText } from "./output/qimenTextRenderer";
@@ -62,7 +63,7 @@ import {
   ZiweiDailyInfo
 } from "./output/listTextRenderer";
 import { Logger } from "./shared/logger";
-import { PALACE_NAMES } from "./services/ziwei/types";
+import { PALACE_NAMES, MutagenInfo } from "./services/ziwei/types";
 import { MutagenCore } from "./core/ziwei/MutagenCore";
 
 const logger = new Logger("mingpan");
@@ -357,6 +358,34 @@ function renderBaziLiuNianSection(
   return "\n\n" + lines.join("\n");
 }
 
+/**
+ * 渲染紫微流年區塊（供 ziwei_basic 於 targetYear 提供時附加）。
+ * 含流年干支、虛歲、流年命宮及流年四化。
+ * targetYear 屬顯式意圖，不受 detail 分級影響（detail=simple 亦顯示）。
+ */
+function renderZiweiLiuNianSection(
+  targetYear: number,
+  age: number,
+  ganzhi: { stem: string; branch: string },
+  palaceName: string,
+  mutagen?: { lu?: string; quan?: string; ke?: string; ji?: string }
+): string {
+  const lines: string[] = [
+    `=== 流年 ${targetYear} ===`,
+    `干支：${ganzhi.stem}${ganzhi.branch}　虛歲：${age}`,
+    `流年宮位：${palaceName}`,
+  ];
+  if (mutagen) {
+    const parts: string[] = [];
+    if (mutagen.lu) parts.push(`化祿-${mutagen.lu}`);
+    if (mutagen.quan) parts.push(`化權-${mutagen.quan}`);
+    if (mutagen.ke) parts.push(`化科-${mutagen.ke}`);
+    if (mutagen.ji) parts.push(`化忌-${mutagen.ji}`);
+    if (parts.length) lines.push(`流年四化：${parts.join(" ")}`);
+  }
+  return "\n" + lines.join("\n");
+}
+
 const BaziCalculateSchema = z.object({
   year: z.coerce.number().int().min(1900).max(2100).describe("Birth year (e.g., 1990)"),
   month: z.coerce.number().int().min(1).max(12).describe("Birth month (1-12)"),
@@ -484,12 +513,19 @@ const MeihuaBasicSchema = z.object({
 // 大六壬 Schema
 // ============================================
 
+const ganZhiField = (label: string) =>
+  z
+    .string()
+    .refine((v) => JIA_ZI_60.includes(v), (v) => ({
+      message: `無效的干支：「${v}」，請使用六十甲子組合（如 甲子、乙丑…）`,
+    }))
+    .describe(`${label}（如：甲子、乙丑等）`);
+
 const DaliurenBasicSchema = z.object({
   jieqi: z.string().describe("節氣（如：立春、雨水、驚蟄等）"),
   lunarMonth: z.coerce.number().int().min(1).max(12).describe("農曆月份（1-12）"),
-  dayGanZhi: z.string().describe("日干支（如：甲子、乙丑等）"),
-  hourGanZhi: z.string().describe("時干支（如：甲子、乙丑等）"),
-  guirenMethod: z.preprocess(numifyNumericStrings, z.union([z.literal(0), z.literal(1)])).optional().default(0).describe("貴人起法：0=標準, 1=另一種"),
+  dayGanZhi: ganZhiField("日干支"),
+  hourGanZhi: ganZhiField("時干支"),
 });
 
 // ============================================
@@ -563,6 +599,9 @@ const BaziDaYunListSchema = BaseBirthInfoSchema.extend({
 const BaziLiuNianListSchema = BaseBirthInfoSchema.extend({
   startYear: z.coerce.number().int().min(1900).max(2100).describe("Start year for the range"),
   endYear: z.coerce.number().int().min(1900).max(2100).describe("End year for the range"),
+}).refine(v => v.startYear <= v.endYear, {
+  message: "startYear 不可大於 endYear",
+  path: ["startYear"],
 });
 
 // 八字流月列表（干支月/节气月）
@@ -594,12 +633,18 @@ const ZiweiDaXianListSchema = BaseBirthInfoSchema.extend({
 const ZiweiXiaoXianListSchema = BaseBirthInfoSchema.extend({
   startAge: z.coerce.number().int().min(1).max(120).describe("Start age (nominal age) for the range"),
   endAge: z.coerce.number().int().min(1).max(120).describe("End age (nominal age) for the range"),
+}).refine(v => v.startAge <= v.endAge, {
+  message: "startAge 不可大於 endAge",
+  path: ["startAge"],
 });
 
 // 紫微流年列表
 const ZiweiLiuNianListSchema = BaseBirthInfoSchema.extend({
   startYear: z.coerce.number().int().min(1900).max(2100).describe("Start year for the range"),
   endYear: z.coerce.number().int().min(1900).max(2100).describe("End year for the range"),
+}).refine(v => v.startYear <= v.endYear, {
+  message: "startYear 不可大於 endYear",
+  path: ["startYear"],
 });
 
 // 紫微流月列表（农历月）
@@ -617,7 +662,7 @@ const ZiweiLiuRiListSchema = BaseBirthInfoSchema.extend({
 // Create Server
 // ============================================
 
-const SERVER_VERSION = "0.1.9";
+const SERVER_VERSION = "0.1.10";
 
 /** 四捨五入至 2 位小數，消除浮點雜訊（供 structuredContent 數值欄位） */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -678,6 +723,8 @@ structuredContent 另分 calculation/analysis/metadata/warnings 各層，內容�
 - 各宫辅星配置
 - 命宫与身宫位置
 - 本命四化（化禄/权/科/忌）
+
+includeMutagen=false 可關閉四化區塊（文本與 structuredContent.mutagen 一併略去）；includeDecades=false 可關閉十二宮位的大限年齡區間標註；targetYear 可附加指定流年干支、虛歲、流年宮位及流年四化（不受 detail 分級影響），structuredContent 另附 liuNian 層。
 
 输出为结构化文本，便于 AI 分析解读。`,
         inputSchema: schemaToJson(ZiweiCalculateSchema),
@@ -1500,6 +1547,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const options: FortuneTextOptions = {
         detail: validated.detail,
         includePersonal: false,
+        includeDecades: validated.includeDecades,
+        includeMutagen: validated.includeMutagen,
       };
 
       const birthDate = new Date(normalized.year, normalized.month - 1, normalized.day, normalized.hour, normalized.minute);
@@ -1513,14 +1562,58 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         options
       );
 
+      // targetYear：附加流年區塊（流年宮位 + 流年四化），不受 detail 分級影響
+      // ziweiService 係共用單例，唔用 setConfig（並發風險），於 handler 層自行計算
+      let liuNianSection = "";
+      let liuNianStructured: {
+        year: number;
+        age: number;
+        ganZhi: string;
+        stem: string;
+        branch: string;
+        palaceName: string;
+        mutagen?: MutagenInfo;
+      } | undefined;
+      if (validated.targetYear && result.palaces) {
+        const yearly = YearlyCalculator.calculate(validated.targetYear, normalized.year, result.palaces);
+        const { stem, branch } = getYearStemBranch(validated.targetYear);
+        const palaceName = result.palaces[yearly.palaceIndex]?.name || '未知';
+        // includeMutagen=false 時流年四化亦一併略去（文本與 structuredContent 一致）
+        const yearlyMutagen = validated.includeMutagen === false
+          ? undefined
+          : MutagenCore.getMutagen(stem) || undefined;
+        liuNianSection = renderZiweiLiuNianSection(
+          validated.targetYear,
+          yearly.age,
+          { stem, branch },
+          palaceName,
+          yearlyMutagen
+        );
+        liuNianStructured = {
+          year: validated.targetYear,
+          age: yearly.age,
+          ganZhi: `${stem}${branch}`,
+          stem,
+          branch,
+          palaceName,
+          ...(yearlyMutagen ? { mutagen: yearlyMutagen } : {}),
+        };
+      }
+
       return {
         content: [
           {
             type: "text",
-            text,
+            text: text + liuNianSection,
           },
         ],
-        structuredContent: { palaces: result.palaces, mutagen: result.mutagenInfo },
+        structuredContent: {
+          palaces: result.palaces,
+          // includeMutagen=false 時略去 mutagen（與文本一致）
+          ...(validated.includeMutagen === false ? {} : { mutagen: result.mutagenInfo }),
+          // 僅在 targetYear 提供時附加（additive，不影響既有形狀）
+          ...(liuNianStructured ? { liuNian: liuNianStructured } : {}),
+        },
       };
     }
 
@@ -1594,7 +1687,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         lunarMonth: validated.lunarMonth,
         dayGanZhi: validated.dayGanZhi,
         hourGanZhi: validated.hourGanZhi,
-        guirenMethod: validated.guirenMethod,
       });
 
       const text = renderDaliurenText(result);
@@ -2308,31 +2400,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const targetAge = validated.lunarYear - normalized.year + 1;
 
       // Find current decade (大限)
+      const matchedDecade = result.decades?.find(
+        d => targetAge >= d.startAge && targetAge <= d.endAge
+      );
       let currentDecade: { palaceName: string; startAge: number; endAge: number } | undefined;
-      if (result.decades && result.decades.length > 0) {
-        const matchedDecade = result.decades.find(
-          d => targetAge >= d.startAge && targetAge <= d.endAge
-        );
-        if (matchedDecade) {
-          currentDecade = {
-            palaceName: matchedDecade.palaceName || result.palaces?.[matchedDecade.palaceIndex]?.name || '未知',
-            startAge: matchedDecade.startAge,
-            endAge: matchedDecade.endAge,
-          };
-        }
+      if (matchedDecade) {
+        currentDecade = {
+          palaceName: matchedDecade.palaceName || result.palaces?.[matchedDecade.palaceIndex]?.name || '未知',
+          startAge: matchedDecade.startAge,
+          endAge: matchedDecade.endAge,
+        };
       }
 
       // Calculate current yearly (流年)
       const yearlyInfo = YearlyCalculator.calculate(validated.lunarYear, normalized.year, result.palaces!);
+      const { stem: targetYearStem, branch: targetYearBranch } = getYearStemBranch(validated.lunarYear);
       let currentYearly: { year: number; age: number; palaceName: string; heavenlyStem: string; earthlyBranch: string } | undefined;
       if (yearlyInfo) {
-        const { stem: yearStem, branch: yearBranch } = getYearStemBranch(validated.lunarYear);
         currentYearly = {
           year: validated.lunarYear,
           age: targetAge,
           palaceName: result.palaces?.[yearlyInfo.palaceIndex]?.name || '未知',
-          heavenlyStem: yearStem,
-          earthlyBranch: yearBranch,
+          heavenlyStem: targetYearStem,
+          earthlyBranch: targetYearBranch,
         };
       }
 
@@ -2348,8 +2438,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      // 添加小限四化到 mutagenInfo
+      // 依查詢年份重算大限／流年／小限四化
+      // result.mutagenInfo 的 decadal/yearly 由 ZiweiService 以「今年」計算，非查詢年，故必須覆寫
       const enhancedMutagenInfo = { ...result.mutagenInfo };
+      enhancedMutagenInfo.decadal = matchedDecade?.heavenlyStem
+        ? MutagenCore.getMutagen(matchedDecade.heavenlyStem) || undefined
+        : undefined;
+      enhancedMutagenInfo.yearly = MutagenCore.getMutagen(targetYearStem) || undefined;
       if (minorLimitInfo?.heavenlyStem) {
         enhancedMutagenInfo.minorLimit = MutagenCore.getMutagen(minorLimitInfo.heavenlyStem) || undefined;
       }
@@ -2465,31 +2560,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const targetAge = validated.lunarYear - normalized.year + 1;
 
       // Find current decade (大限)
+      const matchedDecade = result.decades?.find(
+        d => targetAge >= d.startAge && targetAge <= d.endAge
+      );
       let currentDecade: { palaceName: string; startAge: number; endAge: number } | undefined;
-      if (result.decades && result.decades.length > 0) {
-        const matchedDecade = result.decades.find(
-          d => targetAge >= d.startAge && targetAge <= d.endAge
-        );
-        if (matchedDecade) {
-          currentDecade = {
-            palaceName: matchedDecade.palaceName || result.palaces?.[matchedDecade.palaceIndex]?.name || '未知',
-            startAge: matchedDecade.startAge,
-            endAge: matchedDecade.endAge,
-          };
-        }
+      if (matchedDecade) {
+        currentDecade = {
+          palaceName: matchedDecade.palaceName || result.palaces?.[matchedDecade.palaceIndex]?.name || '未知',
+          startAge: matchedDecade.startAge,
+          endAge: matchedDecade.endAge,
+        };
       }
 
       // Calculate current yearly (流年)
       const yearlyInfo = YearlyCalculator.calculate(validated.lunarYear, normalized.year, result.palaces!);
+      const { stem: targetYearStem, branch: targetYearBranch } = getYearStemBranch(validated.lunarYear);
       let currentYearly: { year: number; age: number; palaceName: string; heavenlyStem: string; earthlyBranch: string } | undefined;
       if (yearlyInfo) {
-        const { stem: yearStem, branch: yearBranch } = getYearStemBranch(validated.lunarYear);
         currentYearly = {
           year: validated.lunarYear,
           age: targetAge,
           palaceName: result.palaces?.[yearlyInfo.palaceIndex]?.name || '未知',
-          heavenlyStem: yearStem,
-          earthlyBranch: yearBranch,
+          heavenlyStem: targetYearStem,
+          earthlyBranch: targetYearBranch,
         };
       }
 
@@ -2516,8 +2609,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      // 计算小限四化和流月四化
+      // 依查詢年份重算大限／流年四化，另計小限四化與流月四化
+      // result.mutagenInfo 的 decadal/yearly 由 ZiweiService 以「今年」計算，非查詢年，故必須覆寫
       const enhancedMutagenInfo = { ...result.mutagenInfo };
+      enhancedMutagenInfo.decadal = matchedDecade?.heavenlyStem
+        ? MutagenCore.getMutagen(matchedDecade.heavenlyStem) || undefined
+        : undefined;
+      enhancedMutagenInfo.yearly = MutagenCore.getMutagen(targetYearStem) || undefined;
       if (minorLimitInfo?.heavenlyStem) {
         enhancedMutagenInfo.minorLimit = MutagenCore.getMutagen(minorLimitInfo.heavenlyStem) || undefined;
       }

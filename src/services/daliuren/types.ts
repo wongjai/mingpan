@@ -81,9 +81,6 @@ export interface DaliurenInput {
   
   /** 時干支 */
   hourGanZhi: string;
-  
-  /** 貴人起法：0=標準, 1=另一種 */
-  guirenMethod?: 0 | 1;
 }
 
 // ============================================

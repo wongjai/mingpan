@@ -1110,11 +1110,20 @@ export function renderZiweiLiuYueList(
     lines.push('');
     const natalLine = formatMutagenLine('本命四化', options.mutagenInfo.natal);
     if (natalLine) lines.push(natalLine);
-    const decadalLine = formatMutagenLine('大限四化', options.mutagenInfo.decadal);
+    const decadalLabel = options.currentDecade
+      ? `大限四化（${options.currentDecade.palaceName}限 ${options.currentDecade.startAge}-${options.currentDecade.endAge}歲）`
+      : '大限四化';
+    const decadalLine = formatMutagenLine(decadalLabel, options.mutagenInfo.decadal);
     if (decadalLine) lines.push(decadalLine);
-    const minorLimitLine = formatMutagenLine('小限四化', options.mutagenInfo.minorLimit);
+    const minorLimitLabel = options.currentMinorLimit
+      ? `小限四化（${options.currentMinorLimit.heavenlyStem}${options.currentMinorLimit.earthlyBranch} ${options.currentMinorLimit.age}歲）`
+      : '小限四化';
+    const minorLimitLine = formatMutagenLine(minorLimitLabel, options.mutagenInfo.minorLimit);
     if (minorLimitLine) lines.push(minorLimitLine);
-    const yearlyLine = formatMutagenLine('流年四化', options.mutagenInfo.yearly);
+    const yearlyLabel = options.currentYearly
+      ? `流年四化（${options.currentYearly.heavenlyStem}${options.currentYearly.earthlyBranch}年 ${options.currentYearly.year}）`
+      : '流年四化';
+    const yearlyLine = formatMutagenLine(yearlyLabel, options.mutagenInfo.yearly);
     if (yearlyLine) lines.push(yearlyLine);
   }
 
@@ -1255,13 +1264,25 @@ export function renderZiweiLiuRiList(
     lines.push('');
     const natalLine = formatMutagenLine('本命四化', options.mutagenInfo.natal);
     if (natalLine) lines.push(natalLine);
-    const decadalLine = formatMutagenLine('大限四化', options.mutagenInfo.decadal);
+    const decadalLabel = options.currentDecade
+      ? `大限四化（${options.currentDecade.palaceName}限 ${options.currentDecade.startAge}-${options.currentDecade.endAge}歲）`
+      : '大限四化';
+    const decadalLine = formatMutagenLine(decadalLabel, options.mutagenInfo.decadal);
     if (decadalLine) lines.push(decadalLine);
-    const minorLimitLine = formatMutagenLine('小限四化', options.mutagenInfo.minorLimit);
+    const minorLimitLabel = options.currentMinorLimit
+      ? `小限四化（${options.currentMinorLimit.heavenlyStem}${options.currentMinorLimit.earthlyBranch} ${options.currentMinorLimit.age}歲）`
+      : '小限四化';
+    const minorLimitLine = formatMutagenLine(minorLimitLabel, options.mutagenInfo.minorLimit);
     if (minorLimitLine) lines.push(minorLimitLine);
-    const yearlyLine = formatMutagenLine('流年四化', options.mutagenInfo.yearly);
+    const yearlyLabel = options.currentYearly
+      ? `流年四化（${options.currentYearly.heavenlyStem}${options.currentYearly.earthlyBranch}年 ${options.currentYearly.year}）`
+      : '流年四化';
+    const yearlyLine = formatMutagenLine(yearlyLabel, options.mutagenInfo.yearly);
     if (yearlyLine) lines.push(yearlyLine);
-    const monthlyLine = formatMutagenLine('流月四化', options.mutagenInfo.monthly);
+    const monthlyLabel = options.currentMonthly
+      ? `流月四化（${LUNAR_MONTH_NAMES[options.currentMonthly.month] || `${options.currentMonthly.month}月`}）`
+      : '流月四化';
+    const monthlyLine = formatMutagenLine(monthlyLabel, options.mutagenInfo.monthly);
     if (monthlyLine) lines.push(monthlyLine);
   }
 

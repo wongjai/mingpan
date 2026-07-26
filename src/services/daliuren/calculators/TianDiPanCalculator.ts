@@ -66,9 +66,8 @@ export class TianDiPanCalculator {
   private static getYueJiang(jieqi: string): DiZhi {
     const yueJiang = JIEQI_YUE_JIANG[jieqi];
     if (!yueJiang) {
-      // 默認返回子（神後）
-      console.warn(`未知節氣: ${jieqi}，使用默認月將`);
-      return '子';
+      const valid = Object.keys(JIEQI_YUE_JIANG).join('、');
+      throw new Error(`無效的節氣：「${jieqi}」，請使用二十四節氣名稱（${valid}）`);
     }
     return yueJiang;
   }
