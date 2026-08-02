@@ -662,7 +662,7 @@ const ZiweiLiuRiListSchema = BaseBirthInfoSchema.extend({
 // Create Server
 // ============================================
 
-const SERVER_VERSION = "0.1.10";
+const SERVER_VERSION = "0.1.11";
 
 /** 四捨五入至 2 位小數，消除浮點雜訊（供 structuredContent 數值欄位） */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -2732,6 +2732,21 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
   });
 }
 
+// 瀏覽器端 MCP client（例如 connector 的設定／驗證頁）在發 POST 前會先送 CORS preflight，
+// preflight 被擋就連 POST 都發不出去。本 server 無 auth、無 cookie，故 origin 用 wildcard。
+const CORS_BASE: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Expose-Headers": "MCP-Protocol-Version, MCP-Session-Id",
+};
+
+const CORS_PREFLIGHT: Record<string, string> = {
+  ...CORS_BASE,
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers":
+    "Content-Type, Accept, Authorization, Last-Event-ID, MCP-Protocol-Version, MCP-Session-Id",
+  "Access-Control-Max-Age": "86400",
+};
+
 // Streamable HTTP（stateless）入口：
 // - sessionIdGenerator: undefined → 不發 session id，重啟/閒置都不會令 ChatGPT 端 session 失效
 // - enableJsonResponse: true → 直接回單次 JSON，不開長 SSE stream，避開 Cloudflare Tunnel 的 idle timeout
@@ -2756,11 +2771,21 @@ async function startHttpServer(): Promise<void> {
     }
 
     if (path === mcpPath) {
+      // 所有 /mcp 回應都帶基本 CORS header，否則 browser 端就算 preflight 過了也讀不到 body。
+      for (const [key, value] of Object.entries(CORS_BASE)) res.setHeader(key, value);
+
+      // Preflight 必須放行（不進下面的 405 分支）。
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, CORS_PREFLIGHT);
+        res.end();
+        return;
+      }
+
       // Stateless 模式只需 POST（request/response）。GET（standalone SSE）與 DELETE（session
       // teardown）在 sessionIdGenerator=undefined 下無意義；尤其 DELETE 會令 transport.close()
-      // 觸發，永久廢掉共享 transport（server 變死但 /healthz 仍回 200）。故一律只放行 POST。
+      // 觸發，永久廢掉共享 transport（server 變死但 /healthz 仍回 200）。故除 preflight 外只放行 POST。
       if (req.method !== "POST") {
-        res.writeHead(405, { "Content-Type": "application/json", "Allow": "POST" });
+        res.writeHead(405, { "Content-Type": "application/json", "Allow": "POST, OPTIONS" });
         res.end(JSON.stringify({
           jsonrpc: "2.0",
           error: { code: -32000, message: "Method Not Allowed: only POST is supported in stateless mode" },
